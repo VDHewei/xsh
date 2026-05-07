@@ -2,6 +2,9 @@ package llm
 
 import (
 	"fmt"
+	"os"
+	"regexp"
+	"strings"
 
 	"github.com/VDHewei/xsh/internal/types"
 )
@@ -35,30 +38,35 @@ func (a *TaskAnalyzer) AnalyzeContent(content string) ([]*types.Task, error) {
 	prompt := buildAnalyzePrompt(content)
 	result, err := a.model.InferWithConfig(prompt, a.cfg)
 	if err != nil {
-		return nil, err
+		// LLM 推理失败时降级到 mock
+		fmt.Printf("LLM inference failed (%v), falling back to mock analysis\n", err)
+		return a.mockAnalyze(content), nil
 	}
 
 	// 解析 LLM 输出为任务
-	return a.parseTasks(result), nil
+	tasks := parseLLMResult(result)
+	if len(tasks) == 0 {
+		// LLM 输出无法解析时降级到 mock
+		return a.mockAnalyze(content), nil
+	}
+	return tasks, nil
 }
 
 // AnalyzeFile 分析文件并生成任务
 func (a *TaskAnalyzer) AnalyzeFile(filename string) ([]*types.Task, error) {
-	content, err := readFileContent(filename)
+	data, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
-
-	return a.AnalyzeContent(content)
+	return a.AnalyzeContent(string(data))
 }
 
-// mockAnalyze 模拟分析
+// mockAnalyze 模拟分析（无模型时的后备方案）
 func (a *TaskAnalyzer) mockAnalyze(content string) []*types.Task {
-	// 简单的 mock 实现：从内容中提取 URL
 	var tasks []*types.Task
 
 	// 检测迁移任务
-	if contains(content, "migration") {
+	if strings.Contains(content, "migration") || strings.Contains(content, "迁移") {
 		task := &types.Task{
 			Type: types.TaskTypeAsk,
 			Raw:  "@ask: 检测到迁移任务，是否继续执行?",
@@ -88,81 +96,96 @@ func (a *TaskAnalyzer) mockAnalyze(content string) []*types.Task {
 
 // buildAnalyzePrompt 构建分析提示
 func buildAnalyzePrompt(content string) string {
-	return fmt.Sprintf(`Please analyze the following deployment migration content and extract the tasks.
+	return fmt.Sprintf(`Analyze the following deployment/migration content and extract tasks.
+Output ONLY the task list, one task per line, using this format:
+[GET] <url> for GET requests
+[POST] <url> for POST requests
+@ask: <description> for user confirmations
+@wait: <duration> for waiting periods (e.g. @wait: 10min)
+@check: <description> for verification steps
 
 Content:
-%s
-
-Extract the tasks as a structured list in this format:
-- [HTTP] <URL> for HTTP requests
-- @ask: <description> for user interactions  
-- @wait:<duration> for waiting periods
-- @check: <description> for verification steps`, content)
+%s`, content)
 }
 
-// parseTasks 解析任务
-func (a *TaskAnalyzer) parseTasks(result string) []*types.Task {
-	// TODO: 使用更智能的解析
-	// 这里使用简单的 mock 实现
-	return a.mockAnalyze(result)
-}
+// parseLLMResult 解析 LLM 输出为任务
+func parseLLMResult(result string) []*types.Task {
+	var tasks []*types.Task
+	lines := strings.Split(result, "\n")
 
-// contains 检查字符串是否包含子串
-func contains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 &&
-		(len(s) >= len(substr)) &&
-		(s[:len(substr)] == substr ||
-			(len(s) > len(substr) && findSubstring(s, substr)))
-}
+	httpPattern := regexp.MustCompile(`^\[(\w+)\]\s+(.+)$`)
+	cmdPattern := regexp.MustCompile(`^@(\w+):\s*(.+)$`)
 
-// findSubstring 查找子串
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ">") {
+			continue
+		}
+
+		if match := httpPattern.FindStringSubmatch(line); match != nil {
+			method := strings.ToUpper(match[1])
+			url := strings.TrimSpace(match[2])
+			tasks = append(tasks, &types.Task{
+				Type: types.TaskTypeHTTP,
+				Raw:  line,
+				HTTP: &types.HTTPTask{
+					Method: types.HTTPMethod(method),
+					URL:    url,
+				},
+			})
+			continue
+		}
+
+		if match := cmdPattern.FindStringSubmatch(line); match != nil {
+			cmd := strings.ToLower(match[1])
+			desc := strings.TrimSpace(match[2])
+			switch cmd {
+			case "ask":
+				tasks = append(tasks, &types.Task{
+					Type: types.TaskTypeAsk,
+					Raw:  line,
+					Ask:  &types.AskTask{Prompt: desc},
+				})
+			case "wait":
+				tasks = append(tasks, &types.Task{
+					Type: types.TaskTypeWait,
+					Raw:  line,
+					Wait: &types.WaitTask{Duration: desc},
+				})
+			case "check":
+				tasks = append(tasks, &types.Task{
+					Type: types.TaskTypeCheck,
+					Raw:  line,
+					Check: &types.CheckTask{Prompt: desc},
+				})
+			}
 		}
 	}
-	return false
+
+	return tasks
 }
 
 // extractURLs 提取 URLs
 func extractURLs(content string) []string {
 	var urls []string
-	var current []rune
-	var inURL bool
-
-	for _, ch := range content {
-		if ch == 'h' && len(current) == 0 {
-			current = append(current, ch)
-			inURL = true
-		} else if inURL {
-			current = append(current, ch)
-			if ch == ' ' || ch == '\n' || ch == '\t' {
-				if len(current) > 4 && string(current[:4]) == "http" {
-					urls = append(urls, string(current[:len(current)-1]))
-				}
-				current = nil
-				inURL = false
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "http://") || strings.Contains(line, "https://") {
+			// 提取 http(s):// 开头的 URL
+			re := regexp.MustCompile(`https?://\S+`)
+			found := re.FindAllString(line, -1)
+			for _, url := range found {
+				// 清除尾部标点
+				url = strings.TrimRight(url, ".,;:!?)]}")
+				urls = append(urls, url)
 			}
 		}
 	}
-
-	if len(current) > 4 && string(current[:4]) == "http" {
-		urls = append(urls, string(current))
-	}
-
 	return urls
 }
 
-// readFileContent 读取文件内容
-func readFileContent(filename string) (string, error) {
-	// 这个实现需要在外部调用 parser.ParseFile
-	// 这里只做占位
-	return "", fmt.Errorf("use parser.ParseFile instead")
-}
-
-// InferWithPrompt 使用 LLM 推理
+// InferWithPrompt 使用 LLM 推理（无模型时使用 mock）
 func InferWithPrompt(prompt string) (string, error) {
-	// 全局推理函数
 	return MockInfer(prompt), nil
 }

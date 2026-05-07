@@ -4,8 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/VDHewei/xsh/internal/executor"
@@ -17,9 +15,10 @@ import (
 var (
 	inputFile  = flag.String("i", "", "Input task file (txt/md)")
 	outputFile = flag.String("o", "", "Output result file")
-	llmModel  = flag.String("m", "", "LLM model to use")
-	llmPrompt = flag.String("p", "", "LLM prompt for inference")
-	testMode  = flag.Bool("test", false, "Run ONNX test mode")
+	llmModel   = flag.String("m", "", "LLM model directory path or name")
+	llmPrompt  = flag.String("p", "", "LLM prompt for inference")
+	testMode   = flag.Bool("test", false, "Run ONNX LLM test mode")
+	streamMode = flag.Bool("stream", false, "Enable streaming output for LLM inference")
 )
 
 func main() {
@@ -72,171 +71,202 @@ func main() {
 
 // runTestMode 运行测试模式
 func runTestMode() {
-	fmt.Println("=== ONNX LLM 任务规划测试 ===")
-	fmt.Println("输入: tests/data/prod-migration-form-uat.txt")
-	fmt.Println()
+	fmt.Println("=== ONNX GenAI LLM 任务规划测试 ===")
 
-	// 尝试下载模型
-	modelPath := downloadModelWithPython()
-	if modelPath != "" {
-		fmt.Println("\n使用 ONNX 模型推理...")
-		testWithONNXModel(modelPath)
-	} else {
-		fmt.Println("\n使用 Mock 推理...")
-		task, err := os.ReadFile("tests/data/prod-migration-form-uat.txt")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to read test file: %v\n", err)
-			os.Exit(1)
-		}
-		result := llm.MockInfer(string(task))
-		fmt.Printf("推理结果:\n%s\n", result)
+	testFile := "tests/data/prod-migration-form-uat.txt"
+	data, err := os.ReadFile(testFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read test file: %v\n", err)
+		os.Exit(1)
 	}
+	content := string(data)
+
+	fmt.Printf("输入: %s\n\n", testFile)
+
+	// 尝试查找模型目录
+	modelDir := findModelDir()
+	if modelDir == "" {
+		fmt.Println("未找到模型目录，使用 Mock 推理...")
+		result := llm.MockInfer(content)
+		fmt.Printf("推理结果:\n%s\n", result)
+		return
+	}
+
+	fmt.Printf("模型目录: %s\n", modelDir)
+
+	// 确保动态库存在
+	if err := llm.DownloadOnnxRuntimeGenAILibrary(); err != nil {
+		fmt.Printf("Warning: failed to ensure genai library: %v\n", err)
+		fmt.Println("使用 Mock 推理...")
+		result := llm.MockInfer(content)
+		fmt.Printf("推理结果:\n%s\n", result)
+		return
+	}
+
+	// 使用 GenAI 进行推理
+	testWithGenAI(modelDir, content)
 }
 
-// downloadModelWithPython 使用 Python 下载模型
-func downloadModelWithPython() string {
-	fmt.Println("开始下载 DeepSeek-R1-Distill-ONNX 模型...")
-	fmt.Println("这可能需要几分钟时间...")
-
-	// 创建模型目录
-	os.MkdirAll("models", 0755)
-
-	// 使用 Python 脚本下载模型
-	script := `
-import os
-from huggingface_hub import snapshot_download
-
-model_id = "onnxruntime/DeepSeek-R1-Distill-ONNX"
-local_dir = "models"
-
-try:
-    # 下载 1.5B CPU 版本
-    path = snapshot_download(
-        repo_id=model_id,
-        allow_patterns=["deepseek-r1-distill-qwen-1.5B/cpu_and_mobile/*"],
-        local_dir=local_dir,
-        local_dir_use_symlinks=False
-    )
-    print(f"SUCCESS:{path}")
-except Exception as e:
-    print(f"ERROR:{e}")
-`
-	cmd := exec.Command("python", "-c", script)
-	output, err := cmd.CombinedOutput()
-	result := string(output)
-	fmt.Println(result)
-
-	if err != nil {
-		fmt.Printf("下载失败: %v\n", err)
-		return ""
+// findModelDir 查找模型目录
+func findModelDir() string {
+	// 候选模型目录路径
+	candidates := []string{
+		"models/deepseek-r1-distill-qwen-1.5B/cpu_and_mobile/cpu-int4-rtn-block-32-acc-level-4",
+		"models/DeepSeek-R1-Distill-ONNX/deepseek-r1-distill-qwen-1.5B/cpu_and_mobile/cpu-int4-rtn-block-32-acc-level-4",
+		"models/deepseek-r1-distill-qwen-1.5B",
 	}
 
-	// 解析输出
-	if strings.Contains(result, "SUCCESS:") {
-		path := strings.TrimPrefix(result, "SUCCESS:")
-		path = strings.TrimSpace(path)
-		return path
+	for _, dir := range candidates {
+		// 检查目录是否包含 genai_config.json 或 model.onnx
+		configPath := dir + "/genai_config.json"
+		onnxPath := dir + "/model.onnx"
+		if _, err := os.Stat(configPath); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(onnxPath); err == nil {
+			return dir
+		}
+	}
+
+	// 搜索 models/ 下的子目录
+	entries, err := os.ReadDir("models")
+	if err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				subEntries, err := os.ReadDir("models/" + entry.Name())
+				if err == nil {
+					for _, sub := range subEntries {
+						if sub.IsDir() {
+							dir := "models/" + entry.Name() + "/" + sub.Name()
+							if _, err := os.Stat(dir + "/model.onnx"); err == nil {
+								return dir
+							}
+						}
+					}
+				}
+				// 顶层目录也检查
+				dir := "models/" + entry.Name()
+				if _, err := os.Stat(dir + "/model.onnx"); err == nil {
+					return dir
+				}
+			}
+		}
 	}
 
 	return ""
 }
 
-// testWithONNXModel 使用 ONNX 模型测试
-func testWithONNXModel(modelPath string) {
-	task, err := os.ReadFile("tests/data/prod-migration-form-uat.txt")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to read test file: %v\n", err)
-		return
-	}
-
-	// 查找 ONNX 模型文件
-	onnxPath := findONNXFile(modelPath)
-	if onnxPath == "" {
-		fmt.Println("未找到 ONNX 模型文件，使用 Mock 推理")
-		result := llm.MockInfer(string(task))
-		fmt.Printf("推理结果:\n%s\n", result)
-		return
-	}
-
-	fmt.Printf("模型路径: %s\n", onnxPath)
-
-	// 创建模型
+// testWithGenAI 使用 GenAI 测试
+func testWithGenAI(modelDir, content string) {
 	model := llm.NewModel("deepseek-r1-distill")
 	defer model.Unload()
 
-	// 加载模型
 	fmt.Println("加载模型...")
-	if err := model.Load(onnxPath); err != nil {
-		fmt.Printf("加载模型失败: %v\n", err)
-		fmt.Println("使用 Mock 推理")
-		result := llm.MockInfer(string(task))
+	if err := model.Load(modelDir); err != nil {
+		fmt.Printf("加载模型失败: %v\n使用 Mock 推理\n", err)
+		result := llm.MockInfer(content)
 		fmt.Printf("推理结果:\n%s\n", result)
 		return
 	}
 
 	fmt.Println("模型加载成功!")
 
-	// 构建提示
-	prompt := string(task)
+	// 构建任务分析提示
+	prompt := buildTaskPrompt(content)
 
-	// 执行推理
-	fmt.Println("执行推理...")
-	result, err := model.Infer(prompt)
-	if err != nil {
-		fmt.Printf("推理失败: %v\n", err)
-		return
+	fmt.Println("\n执行推理...")
+	if *streamMode {
+		fmt.Println("--- 流式输出 ---")
+		err := model.InferStream(prompt, llm.GenerateOptions{
+			MaxTokens:   2048,
+			Temperature: 0.7,
+			TopP:        0.9,
+			DoSample:    true,
+			StopOnEos:   true,
+		}, func(text string) error {
+			fmt.Print(text)
+			return nil
+		})
+		if err != nil {
+			fmt.Printf("\n推理错误: %v\n", err)
+		}
+		fmt.Println()
+	} else {
+		result, err := model.Infer(prompt)
+		if err != nil {
+			fmt.Printf("推理失败: %v\n", err)
+			return
+		}
+		fmt.Printf("\n推理结果:\n%s\n", result)
 	}
-
-	fmt.Printf("\n推理结果:\n%s\n", result)
 }
 
-// findONNXFile 查找 ONNX 模型文件
-func findONNXFile(dir string) string {
-	var onnxFiles []string
+// buildTaskPrompt 构建任务分析提示
+func buildTaskPrompt(taskContent string) string {
+	return fmt.Sprintf(`你是一个任务规划和执行助手。请分析以下迁移步骤，提取出结构化任务列表。
 
-	// 递归查找 .onnx 文件
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if !info.IsDir() && strings.HasSuffix(path, ".onnx") {
-			onnxFiles = append(onnxFiles, path)
-		}
-		return nil
-	})
+迁移步骤:
+%s
 
-	if len(onnxFiles) > 0 {
-		// 返回第一个找到的 ONNX 文件
-		return onnxFiles[0]
-	}
-	return ""
+请按以下格式输出，每行一个任务：
+[GET] <url> 用于 GET 请求
+[POST] <url> 用于 POST 请求
+@ask: <描述> 用于需要用户确认的步骤
+@wait: <时长> 用于等待步骤 (如 @wait: 10min)
+@check: <描述> 用于验证步骤
+
+只输出任务列表，不要其他内容。`, taskContent)
 }
 
 // runLLMMode 运行 LLM 模式
 func runLLMMode(modelName string, prompt string, inputFile string) {
-	// 创建模型
-	model := llm.NewModel(modelName)
+	// 解析模型路径：可能是名称或路径
+	modelDir := modelName
+	if modelName != "" && !strings.Contains(modelName, "/") && !strings.Contains(modelName, "\\") {
+		// 看起来是模型名称，在 models/ 下查找
+		modelDir = llm.GetModelPath("models", modelName)
+	}
 
 	// 如果指定了模型路径，加载模型
-	if modelName != "" {
-		modelPath := llm.GetModelPath("models", modelName)
-		if err := model.Load(modelPath); err != nil {
+	var model *llm.Model
+	if modelDir != "" {
+		model = llm.NewModel(modelName)
+		if err := model.Load(modelDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Load model warning: %v, using mock inference\n", err)
-			// 使用 mock 推理
+			model = nil
+		} else {
+			defer model.Unload()
 		}
 	}
 
 	// 使用模型推理
 	if prompt != "" {
-		if model.IsLoaded() {
-			result, err := model.Infer(prompt)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Inference error: %v\n", err)
-				os.Exit(1)
+		if model != nil && model.IsLoaded() {
+			if *streamMode {
+				err := model.InferStream(prompt, llm.GenerateOptions{
+					MaxTokens:   2048,
+					Temperature: 0.7,
+					TopP:        0.9,
+					DoSample:    true,
+					StopOnEos:   true,
+				}, func(text string) error {
+					fmt.Print(text)
+					return nil
+				})
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "\nInference error: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Println()
+			} else {
+				result, err := model.Infer(prompt)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Inference error: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Println(result)
 			}
-			fmt.Println(result)
 		} else {
-			// 使用 mock 推理
 			fmt.Println(llm.MockInfer(prompt))
 		}
 		return
@@ -245,7 +275,9 @@ func runLLMMode(modelName string, prompt string, inputFile string) {
 	// 如果有输入文件，分析文件内容
 	if inputFile != "" {
 		analyzer := llm.NewTaskAnalyzer()
-		analyzer.SetModel(model)
+		if model != nil {
+			analyzer.SetModel(model)
+		}
 
 		tasks, err := analyzer.AnalyzeFile(inputFile)
 		if err != nil {

@@ -1,332 +1,293 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
-	"flag"
-	"fmt"
-	"log"
 	"os"
-	"path/filepath"
+	"testing"
 
-	"github.com/VDHewei/xsh/pkg/llm"
+	"github.com/VDHewei/xsh/internal/parser"
+	llm "github.com/VDHewei/xsh/pkg/llm"
 )
 
-// TaskRequest 任务请求
-type TaskRequest struct {
-	Task     string   `json:"task"`     // 任务描述
-	Tools   []string `json:"tools"`   // 可用工具
-	Context string   `json:"context"` // 上下文
+// TaskStep 任务步骤
+type TaskStep struct {
+	ID     string `json:"id"`
+	Action string `json:"action"`
+	Tool   string `json:"tool"`
+	Params string `json:"params"`
+	Status string `json:"status"`
 }
 
 // TaskResult 任务结果
 type TaskResult struct {
-	Plan    string        `json:"plan"`    // 任务规划
-	Steps   []TaskStep    `json:"steps"`   // 执行步骤
-	Results []StepResult `json:"results"` // 执行结果
-}
-
-// TaskStep 任务步骤
-type TaskStep struct {
-	ID      string `json:"id"`      // 步骤 ID
-	Action  string `json:"action"`  // 执行动作
-	Tool   string `json:"tool"`   // 使用的工具
-	Params string `json:"params"` // 参数
-	Status string `json:"status"` // 状态: pending/running/completed/failed
+	Plan    string        `json:"plan"`
+	Steps   []TaskStep    `json:"steps"`
+	Results []StepResult  `json:"results"`
 }
 
 // StepResult 步骤结果
 type StepResult struct {
-	StepID  string `json:"step_id"`  // 步骤 ID
-	Output string `json:"output"` // 输出
-	Error  string `json:"error"`  // 错误
+	StepID string `json:"step_id"`
+	Output string `json:"output"`
+	Error  string `json:"error"`
 }
 
-// ToolCall 工具调用请求
-type ToolCall struct {
-	Tool  string            `json:"tool"`  // 工具名
-	Args  map[string]string `json:"args"`  // 参数
+// TestMockInfer 测试 Mock 推理
+func TestMockInfer(t *testing.T) {
+	result := llm.MockInfer("Hello")
+	if result == "" {
+		t.Error("MockInfer should return non-empty string")
+	}
+	t.Logf("MockInfer result: %s", result)
 }
 
-var (
-	modelPath = flag.String("model", "", "Path to ONNX model")
-	testFile  = flag.String("input", "tests/data/prod-migration-form-uat.txt", "Input test file")
-	download  = flag.Bool("download", false, "Download model from HuggingFace")
-)
+// TestMockAnalyze 测试 Mock 分析
+func TestMockAnalyze(t *testing.T) {
+	analyzer := llm.NewTaskAnalyzer()
+	content := `# Migration Steps
+[GET] http://example.com/api/health
+@wait: 10min
+@ask: 检查服务是否正常
+[POST] http://example.com/api/deploy
+@check: 验证部署结果`
 
-func main() {
-	flag.Parse()
-
-	// 如果没有指定模型，尝试使用默认路径
-	if *modelPath == "" {
-		// 查找本地模型
-		*modelPath = findModel()
+	tasks, err := analyzer.AnalyzeContent(content)
+	if err != nil {
+		t.Fatalf("AnalyzeContent failed: %v", err)
 	}
 
-	fmt.Println("=== ONNX LLM 任务规划测试 ===")
-	fmt.Printf("Model: %s\n", *modelPath)
-	fmt.Printf("Input: %s\n\n", *testFile)
+	if len(tasks) == 0 {
+		t.Error("AnalyzeContent should return at least one task")
+	}
 
-	// 如果指定了下载选项，下载模型
-	if *download {
-		downloadModel()
+	for i, task := range tasks {
+		t.Logf("Task[%d]: type=%s raw=%s", i, task.Type, task.Raw)
+	}
+}
+
+// TestMockInferWithRealFile 测试使用测试文件进行 Mock 推理
+func TestMockInferWithRealFile(t *testing.T) {
+	testFile := "tests/data/prod-migration-form-uat.txt"
+	task, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Skipf("Test file not found: %s, skipping", testFile)
+	}
+
+	result := llm.MockInfer(string(task))
+	if result == "" {
+		t.Error("MockInfer should return non-empty string for test file content")
+	}
+	t.Logf("Mock inference result (%d chars):\n%s", len(result), result)
+}
+
+// TestModelCreation 测试模型创建
+func TestModelCreation(t *testing.T) {
+	model := llm.NewModel("test-model")
+	if model.IsLoaded() {
+		t.Error("New model should not be loaded")
+	}
+	if model.Name != "test-model" {
+		t.Errorf("Expected name 'test-model', got '%s'", model.Name)
+	}
+}
+
+// TestNewConfig 测试配置创建
+func TestNewConfig(t *testing.T) {
+	cfg := llm.NewConfig()
+	if cfg.MaxLength != 2048 {
+		t.Errorf("Expected MaxLength 2048, got %d", cfg.MaxLength)
+	}
+	if cfg.Temperature != 0.7 {
+		t.Errorf("Expected Temperature 0.7, got %f", cfg.Temperature)
+	}
+}
+
+// TestTaskAnalyzerWithFile 测试 TaskAnalyzer 文件分析
+func TestTaskAnalyzerWithFile(t *testing.T) {
+	analyzer := llm.NewTaskAnalyzer()
+	testFile := "tests/data/prod-migration-form-uat.txt"
+
+	tasks, err := analyzer.AnalyzeFile(testFile)
+	if err != nil {
+		t.Skipf("Test file not found: %s, skipping", testFile)
+	}
+
+	t.Logf("Analyzed %d tasks from file", len(tasks))
+	for i, task := range tasks {
+		t.Logf("  [%d] %s: %s", i, task.Type, task.Raw)
+	}
+}
+
+// TestInferWithPrompt 测试全局推理函数
+func TestInferWithPrompt(t *testing.T) {
+	result, err := llm.InferWithPrompt("Test prompt")
+	if err != nil {
+		t.Fatalf("InferWithPrompt failed: %v", err)
+	}
+	if result == "" {
+		t.Error("InferWithPrompt should return non-empty string")
+	}
+	t.Logf("InferWithPrompt result: %s", result)
+}
+
+// TestListModels 测试列出模型
+func TestListModels(t *testing.T) {
+	models, err := llm.ListModels("models")
+	if err != nil {
+		t.Logf("ListModels returned error (expected if no models dir): %v", err)
 		return
 	}
-
-	// 加载测试数据
-	task, err := os.ReadFile(*testFile)
-	if err != nil {
-		log.Fatalf("Failed to read test file: %v", err)
-	}
-
-	// 如果指定了模型，使用 ONNX 推理
-	if *modelPath != "" && fileExists(*modelPath) {
-		fmt.Println("使用 ONNX 模型推理...")
-		testWithONNX(string(task), *modelPath)
-	} else {
-		fmt.Println("使用 Mock 推理...")
-		fmt.Println("提示: 使用 -download 下载模型，或指定 -model 参数")
-		testWithMock(string(task))
+	t.Logf("Found %d models", len(models))
+	for _, m := range models {
+		t.Logf("  - %s", m)
 	}
 }
 
-// findModel 查找本地模型
-func findModel() string {
-	paths := []string{
-		"models/deepseek-r1-distill-qwen-1.5B/cpu_and_mobile/int4-rtn/block-32_acc-level-4/decoder_model.onnx",
-		"models/DeepSeek-R1-Distill-ONNX/deepseek-r1-distill-qwen-1.5B/cpu_and_mobile/int4-rtn/block-32_acc-level-4/decoder_model.onnx",
-		"models/model.onnx",
-	}
-
-	for _, p := range paths {
-		if fileExists(p) {
-			return p
-		}
-	}
-	return ""
-}
-
-// fileExists 检查文件是否存在
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-// downloadModel 下载模型
-func downloadModel() {
-	fmt.Println("开始下载 DeepSeek-R1-Distill-ONNX 模型...")
-	fmt.Println("模型: onnxruntime/DeepSeek-R1-Distill-ONNX")
-	fmt.Println("版本: deepseek-r1-distill-qwen-1.5B CPU int4")
-	fmt.Println()
-
+// TestSearchModels 测试搜索模型
+func TestSearchModels(t *testing.T) {
 	cfg := llm.NewDownloadConfig()
-	cfg.CacheDir = "models"
-
-	// 下载 1.5B CPU 版本
-	repoID := "onnxruntime/DeepSeek-R1-Distill-ONNX"
-
-	model, err := llm.DownloadFromHuggingFace(repoID, cfg)
+	models, err := llm.SearchModels("onnx", cfg)
 	if err != nil {
-		log.Fatalf("Failed to download model: %v", err)
+		t.Logf("SearchModels returned error: %v", err)
+		return
 	}
-
-	fmt.Printf("模型下载完成!\n")
-	fmt.Printf("模型路径: %s\n", model.Path)
-	fmt.Printf("模型大小: %d bytes\n", model.Size)
-	fmt.Println()
-	fmt.Println("请使用以下命令运行测试:")
-	fmt.Printf("  go run ./cmd/xsh onnx-test -model %s\n", filepath.Join(model.Path, "model.onnx"))
+	if len(models) == 0 {
+		t.Error("SearchModels should return at least one result")
+	}
+	t.Logf("Search results: %v", models)
 }
 
-// executeToolCall 执行工具调用
-func executeToolCall(tc ToolCall) (string, error) {
-	switch tc.Tool {
-	case "http-get":
-		url := tc.Args["url"]
-		return fmt.Sprintf("GET %s -> 200 OK (mock)", url), nil
-	case "http-post":
-		url := tc.Args["url"]
-		return fmt.Sprintf("POST %s -> 200 OK (mock)", url), nil
-	case "sleep":
-		return fmt.Sprintf("Waited %s (mock)", tc.Args["duration"]), nil
-	case "ask":
-		return fmt.Sprintf("Asked user: %s (mock)", tc.Args["question"]), nil
-	default:
-		return "", fmt.Errorf("unknown tool: %s", tc.Tool)
-	}
-}
-
-// testWithONNX 使用 ONNX 模型测试
-func testWithONNX(task, modelPath string) {
-	model := llm.NewModel("deepseek-r1-distill")
-	defer model.Unload()
-
-	fmt.Printf("加载模型: %s\n", modelPath)
-	if err := model.Load(modelPath); err != nil {
-		log.Fatalf("Failed to load model: %v", err)
-	}
-
-	prompt := buildPrompt(task)
-
-	fmt.Println("\n执行推理...")
-	result, err := model.Infer(prompt)
+// TestGetModelInfo 测试获取模型信息
+func TestGetModelInfo(t *testing.T) {
+	cfg := llm.NewDownloadConfig()
+	info, err := llm.GetModelInfo("onnxruntime/DeepSeek-R1-Distill-ONNX", cfg)
 	if err != nil {
-		log.Fatalf("Failed to infer: %v", err)
+		t.Fatalf("GetModelInfo failed: %v", err)
+	}
+	t.Logf("Model info: %v", info)
+}
+
+// TestDownloadConfig 测试下载配置
+func TestDownloadConfig(t *testing.T) {
+	cfg := llm.NewDownloadConfig()
+	if cfg.CacheDir != "models" {
+		t.Errorf("Expected default CacheDir 'models', got '%s'", cfg.CacheDir)
 	}
 
-	fmt.Printf("\n推理结果:\n%s\n", result)
-
-	executeTaskResult(result)
+	llm.SetProxy("http://proxy:8080")
+	proxy := os.Getenv("HTTP_PROXY")
+	if proxy != "http://proxy:8080" {
+		t.Errorf("Expected HTTP_PROXY 'http://proxy:8080', got '%s'", proxy)
+	}
+	os.Unsetenv("HTTP_PROXY")
+	os.Unsetenv("HTTPS_PROXY")
 }
 
-// testWithMock 使用 Mock 测试
-func testWithMock(task string) {
-	result := llm.MockInfer(task)
-	fmt.Printf("Mock 推理结果:\n%s\n", result)
-
-	executeTaskResult(result)
+// TestGetModelPath 测试获取模型路径
+func TestGetModelPath(t *testing.T) {
+	path := llm.GetModelPath("models", "test-model")
+	if path != "models/test-model" && path != "models\\test-model" {
+		t.Errorf("Expected path 'models/test-model' or 'models\\test-model', got '%s'", path)
+	}
 }
 
-// buildPrompt 构建推理提示
-func buildPrompt(taskContent string) string {
-	return fmt.Sprintf(`你是一个任务规划和执行助手。请分析以下迁移步骤，生成任务规划并执行。
-
-迁移步骤:
-%s
-
-请生成 JSON 格式的任务规划，包含:
-1. plan: 任务总体描述
-2. steps: 执行步骤数组，每个步骤包含:
-   - id: 步骤ID
-   - action: 执行动作
-   - tool: 使用的工具 (http-get, http-post, sleep, ask)
-   - params: 参数
-   - status: 状态 (pending)
-
-请只输出 JSON，不要其他内容。`, taskContent)
-}
-
-// executeTaskResult 执行任务结果
-func executeTaskResult(result string) {
-	fmt.Println("\n=== 执行任务 ===")
+// TestExecuteTaskResult 测试执行任务结果解析
+func TestExecuteTaskResult(t *testing.T) {
+	jsonResult := `{
+		"plan": "Execute migration steps",
+		"steps": [
+			{"id": "step-1", "action": "健康检查", "tool": "http-get", "params": "http://example.com/health", "status": "pending"},
+			{"id": "step-2", "action": "等待", "tool": "sleep", "params": "10min", "status": "pending"}
+		]
+	}`
 
 	var taskResult TaskResult
-	if err := json.Unmarshal([]byte(result), &taskResult); err != nil {
-		fmt.Println("使用模拟执行...")
-		mockExecute(result)
-		return
+	if err := json.Unmarshal([]byte(jsonResult), &taskResult); err != nil {
+		t.Fatalf("Failed to parse task result JSON: %v", err)
 	}
 
-	fmt.Printf("计划: %s\n", taskResult.Plan)
-	fmt.Printf("步骤数: %d\n\n", len(taskResult.Steps))
-
-	for i, step := range taskResult.Steps {
-		fmt.Printf("[%d/%d] Step: %s\n", i+1, len(taskResult.Steps), step.ID)
-		fmt.Printf("    Action: %s\n", step.Action)
-		fmt.Printf("    Tool: %s\n", step.Tool)
-
-		tc := ToolCall{
-			Tool: step.Tool,
-			Args: map[string]string{
-				"url":      step.Params,
-				"question": step.Action,
-			},
-		}
-		output, err := executeToolCall(tc)
-		if err != nil {
-			fmt.Printf("    Error: %v\n", err)
-		} else {
-			fmt.Printf("    Result: %s\n", output)
-		}
-		fmt.Println()
+	if taskResult.Plan != "Execute migration steps" {
+		t.Errorf("Expected plan 'Execute migration steps', got '%s'", taskResult.Plan)
+	}
+	if len(taskResult.Steps) != 2 {
+		t.Errorf("Expected 2 steps, got %d", len(taskResult.Steps))
 	}
 }
 
-// mockExecute 模拟执行
-func mockExecute(prompt string) {
-	file, err := os.Open(*testFile)
+// TestModelLoadNonexistent 测试加载不存在的模型
+func TestModelLoadNonexistent(t *testing.T) {
+	model := llm.NewModel("nonexistent")
+	err := model.Load("/nonexistent/path/model_dir")
+	if err == nil {
+		t.Error("Loading nonexistent model should return error")
+	}
+	t.Logf("Expected error: %v", err)
+}
+
+// TestModelUnload 测试模型卸载
+func TestModelUnload(t *testing.T) {
+	model := llm.NewModel("test-unload")
+	model.Unload()
+	if model.IsLoaded() {
+		t.Error("After unload, model should not be loaded")
+	}
+}
+
+// TestParserWithSampleData 测试解析器配合示例数据
+func TestParserWithSampleData(t *testing.T) {
+	tmpDir := t.TempDir()
+	testFile := tmpDir + "/test_tasks.txt"
+
+	content := `# Test migration file
+> This is a comment
+[GET] http://example.com/api/health
+@wait: 10min
+@ask: 检查服务是否正常
+[POST] http://example.com/api/deploy
+@check: 验证部署结果
+`
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	tasks, err := parser.ParseFile(testFile)
 	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	var steps []TaskStep
-	scanner := bufio.NewScanner(file)
-	stepID := 1
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		var tool, params string
-
-		switch {
-		case contains(line, "[GET]"):
-			tool = "http-get"
-			params = extractURL(line)
-		case contains(line, "[POST]"):
-			tool = "http-post"
-			params = extractURL(line)
-		case contains(line, "@wait:"):
-			tool = "sleep"
-			params = extractWait(line)
-		case contains(line, "@ask:"):
-			tool = "ask"
-			params = extractQuestion(line)
-		default:
-			continue
-		}
-
-		if tool != "" {
-			steps = append(steps, TaskStep{
-				ID:      fmt.Sprintf("step-%d", stepID),
-				Action:  line,
-				Tool:   tool,
-				Params: params,
-				Status: "pending",
-			})
-			stepID++
-		}
+		t.Fatalf("parseFile failed: %v", err)
 	}
 
-	fmt.Printf("解析到 %d 个步骤:\n\n", len(steps))
+	if len(tasks) == 0 {
+		t.Error("Should parse at least one task")
+	}
 
-	for i, step := range steps {
-		fmt.Printf("[%d] %s\n", i+1, step.Tool)
-		fmt.Printf("    %s\n\n", step.Params)
+	t.Logf("Parsed %d tasks", len(tasks))
+	for i, task := range tasks {
+		t.Logf("  [%d] Type=%s Raw=%s", i, task.Type, task.Raw)
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s[:len(substr)] == substr || bytes.Contains([]byte(s), []byte(substr)))
+// TestDefaultGenAILibraryPath 测试默认 GenAI 动态库路径
+func TestDefaultGenAILibraryPath(t *testing.T) {
+	path := llm.DefaultGenAILibraryPath()
+	if path == "" {
+		t.Error("DefaultGenAILibraryPath should return non-empty string")
+	}
+	t.Logf("GenAI lib path: %s", path)
 }
 
-func extractURL(line string) string {
-	start := 0
-	for i := 0; i < len(line)-4; i++ {
-		if line[i:i+5] == "[GET]" || line[i:i+5] == "[POST]" {
-			start = i + 5
-			break
-		}
+// TestDefaultOnnxRuntimeLibraryPath 测试默认 onnxruntime 动态库路径
+func TestDefaultOnnxRuntimeLibraryPath(t *testing.T) {
+	path := llm.DefaultOnnxRuntimeLibraryPath()
+	if path == "" {
+		t.Error("DefaultOnnxRuntimeLibraryPath should return non-empty string")
 	}
-	for i := start; i < len(line); i++ {
-		if i+4 <= len(line) && line[i:i+4] == "http" {
-			start = i
-			break
-		}
-	}
-	for i := start; i < len(line); i++ {
-		if line[i] == ' ' || line[i] == '\n' {
-			return line[start:i]
-		}
-	}
-	return line[start:]
+	t.Logf("OnnxRuntime lib path: %s", path)
 }
 
-func extractWait(line string) string {
-	return "10min"
-}
-
-func extractQuestion(line string) string {
-	return "询问用户是否执行"
+// TestBuildTaskPrompt 测试构建任务提示
+func TestBuildTaskPrompt(t *testing.T) {
+	prompt := buildTaskPrompt("Sample migration content")
+	if prompt == "" {
+		t.Error("buildTaskPrompt should return non-empty string")
+	}
+	t.Logf("Prompt length: %d", len(prompt))
 }

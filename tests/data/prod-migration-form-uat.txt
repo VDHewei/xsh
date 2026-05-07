@@ -1,0 +1,40 @@
+# 生产环境迁移到 UAT 流程
+> 此文档描述从生产环境迁移到 UAT 环境的详细步骤
+> 执行前请确认已获得运维团队审批
+
+## 前置检查
+@ask: 请确认是否已获得运维团队审批，是否继续执行迁移任务？
+
+## 步骤 1: 健康检查
+[GET] http://prod-api.example.com/health
+@check: 生产环境 API 健康状态是否正常？
+
+## 步骤 2: 备份数据
+[POST] http://prod-api.example.com/api/backup
+@check: 数据备份是否完成？请检查备份文件大小和时间戳
+
+## 步骤 3: 等待备份完成
+@wait: 10min
+@ask: 备份等待时间已到，是否确认备份已完成？
+
+## 步骤 4: 迁移数据库
+[POST] http://uat-api.example.com/api/migrate
+@check: 数据库迁移是否成功？请验证迁移日志
+
+## 步骤 5: 等待迁移同步
+@wait: 5min
+
+## 步骤 6: 验证 UAT 服务
+[GET] http://uat-api.example.com/health
+@check: UAT 环境 API 健康状态是否正常？
+
+## 步骤 7: 验证数据一致性
+[GET] http://uat-api.example.com/api/verify
+@ask: 数据一致性校验结果是否通过？
+
+## 步骤 8: 通知团队
+[POST] http://notification.example.com/api/send
+@check: 迁移完成通知是否已发送？
+
+## 完成
+@ask: 迁移流程全部完成，请确认是否需要执行后续验证？

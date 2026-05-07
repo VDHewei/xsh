@@ -1,6 +1,5 @@
 .idea
 .vscode
-tests/data/*.txt
 bin/
 *.zip
 *.exe
@@ -8,4 +7,4 @@ bin/
 onnxruntime_extracted/
 lib/
 models/
-bin/
+pkg/llm/lib/
