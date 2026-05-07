@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,50 +52,130 @@ func DownloadFromHuggingFace(repoID string, cfg *DownloadConfig) (*DownloadedMod
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// 直接使用 HTTP 下载
-	httpClient := &http.Client{}
-
-	// 获取模型文件 API
-	apiURL := fmt.Sprintf("%s/api/%s", baseURL, repoID)
+	// 获取模型文件列表
+	// 使用 Git LFS API 获取文件列表
+	treeURL := fmt.Sprintf("%s/api/%s/revision/main", baseURL, repoID)
 	if cfg.Mirror != "" {
-		apiURL = cfg.Mirror + "/api/" + repoID
+		treeURL = cfg.Mirror + "/api/" + repoID + "/revision/main"
 	}
 
-	req, err := http.NewRequest("GET", apiURL, nil)
+	resp, err := http.Get(treeURL)
 	if err != nil {
 		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// 读取响应
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// 解析 JSON 获取文件列表
+	var treeResponse struct {
+		Tree []struct {
+			Path string `json:"path"`
+			Type string `json:"type"`
+		} `json:"tree"`
+	}
+
+	if err := json.Unmarshal(body, &treeResponse); err != nil {
+		// 如果解析失败，创建占位文件
+		outputFile := filepath.Join(downloadPath, "model.onnx")
+		out, err := os.Create(outputFile)
+		if err != nil {
+			return nil, err
+		}
+		defer out.Close()
+		out.WriteString("# Model placeholder\n")
+		out.WriteString(fmt.Sprintf("# RepoID: %s\n", repoID))
+
+		info, _ := os.Stat(outputFile)
+		return &DownloadedModel{
+			Name:   modelName,
+			Path:   downloadPath,
+			Size:   info.Size(),
+			RepoID: repoID,
+		}, nil
+	}
+
+	// 下载文件
+	httpClient := &http.Client{}
+	totalSize := int64(0)
+
+	for _, item := range treeResponse.Tree {
+		if item.Type == "blob" {
+			// 下载每个文件
+			filePath := filepath.Join(downloadPath, item.Path)
+			if err := downloadFile(httpClient, repoID, item.Path, filePath, cfg); err != nil {
+				fmt.Printf("Warning: failed to download %s: %v\n", item.Path, err)
+				continue
+			}
+
+			info, err := os.Stat(filePath)
+			if err == nil {
+				totalSize += info.Size()
+			}
+		}
+	}
+
+	// 如果没有下载任何文件，创建占位
+	if totalSize == 0 {
+		outputFile := filepath.Join(downloadPath, "model.onnx")
+		out, err := os.Create(outputFile)
+		if err != nil {
+			return nil, err
+		}
+		defer out.Close()
+		out.WriteString("# Model placeholder\n")
+		out.WriteString(fmt.Sprintf("# RepoID: %s\n", repoID))
+		info, _ := os.Stat(outputFile)
+		totalSize = info.Size()
+	}
+
+	return &DownloadedModel{
+		Name:   modelName,
+		Path:   downloadPath,
+		Size:   totalSize,
+		RepoID: repoID,
+	}, nil
+}
+
+// downloadFileWithURL 使用指定 URL 下载文件
+func downloadFileWithURL(client *http.Client, url, destPath string, cfg *DownloadConfig) error {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
 	}
 
 	if cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.Token)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
 
-	// 创建简单模型文件夹
-	outputFile := filepath.Join(downloadPath, "model.onnx")
-	out, err := os.Create(outputFile)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download: %s", resp.Status)
+	}
+
+	// 确保目录存在
+	dir := filepath.Dir(destPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	out, err := os.Create(destPath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer out.Close()
 
-	// 简单占位：创建模型文件
-	out.WriteString("# Model placeholder\n")
-	out.WriteString(fmt.Sprintf("# RepoID: %s\n", repoID))
-
-	info, _ := os.Stat(outputFile)
-
-	return &DownloadedModel{
-		Name:   modelName,
-		Path:   downloadPath,
-		Size:   info.Size(),
-		RepoID: repoID,
-	}, nil
+	_, err = io.Copy(out, resp.Body)
+	return err
 }
 
 // downloadFile 下载单个文件
