@@ -1,7 +1,9 @@
 package llm
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net/http"
@@ -63,35 +65,39 @@ func NewModel(name string) *Model {
 
 // DefaultGenAILibraryPath 返回 onnxruntime-genai 动态库的默认路径
 func DefaultGenAILibraryPath() string {
+	_, filename, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(filename), "..", "..")
 	switch runtime.GOOS {
 	case "windows":
-		return filepath.Join("lib", "onnxruntime-genai.dll")
+		return filepath.Join(root, "lib", "onnxruntime-genai.dll")
 	case "linux":
 		if runtime.GOARCH == "arm64" {
-			return filepath.Join("lib", "libonnxruntime-genai.so")
+			return filepath.Join(root, "lib", "libonnxruntime-genai.so")
 		}
-		return filepath.Join("lib", "libonnxruntime-genai.so")
+		return filepath.Join(root, "lib", "libonnxruntime-genai.so")
 	case "darwin":
-		return filepath.Join("lib", "libonnxruntime-genai.dylib")
+		return filepath.Join(root, "lib", "libonnxruntime-genai.dylib")
 	default:
-		return filepath.Join("lib", "onnxruntime-genai")
+		return filepath.Join(root, "lib", "onnxruntime-genai")
 	}
 }
 
 // DefaultOnnxRuntimeLibraryPath 返回 onnxruntime 动态库的默认路径
 func DefaultOnnxRuntimeLibraryPath() string {
+	_, filename, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(filename), "..", "..")
 	switch runtime.GOOS {
 	case "windows":
-		return filepath.Join("lib", "onnxruntime.dll")
+		return filepath.Join(root, "lib", "onnxruntime.dll")
 	case "linux":
 		if runtime.GOARCH == "arm64" {
-			return filepath.Join("lib", "libonnxruntime.so")
+			return filepath.Join(root, "lib", "libonnxruntime.so")
 		}
-		return filepath.Join("lib", "libonnxruntime.so")
+		return filepath.Join(root, "lib", "libonnxruntime.so")
 	case "darwin":
-		return filepath.Join("lib", "libonnxruntime.dylib")
+		return filepath.Join(root, "lib", "libonnxruntime.dylib")
 	default:
-		return filepath.Join("lib", "libonnxruntime.so")
+		return filepath.Join(root, "lib", "libonnxruntime.so")
 	}
 }
 
@@ -239,8 +245,9 @@ func downloadAndExtractArchive(downloadURL, destDir, platform, ext string) error
 			return fmt.Errorf("failed to unzip: %w", err)
 		}
 	} else {
-		// tar.gz 提取
-		return fmt.Errorf("tar.gz extraction not yet implemented, please manually download from: %s", downloadURL)
+		if err := untargz(archivePath, tmpDir); err != nil {
+			return fmt.Errorf("failed to extract tar.gz: %w", err)
+		}
 	}
 
 	// 查找并复制动态库文件到 lib/
@@ -668,6 +675,54 @@ func unzip(src, dst string) error {
 			if err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func untargz(src, dst string) error {
+	f, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open archive: %w", err)
+	}
+	defer f.Close()
+
+	gzReader, err := gzip.NewReader(f)
+	if err != nil {
+		return fmt.Errorf("create gzip reader: %w", err)
+	}
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read tar entry: %w", err)
+		}
+
+		path := filepath.Join(dst, header.Name)
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(path, 0755); err != nil {
+				return fmt.Errorf("create dir: %w", err)
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				return fmt.Errorf("create parent dir: %w", err)
+			}
+			outFile, err := os.Create(path)
+			if err != nil {
+				return fmt.Errorf("create file: %w", err)
+			}
+			if _, err := io.Copy(outFile, tarReader); err != nil {
+				outFile.Close()
+				return fmt.Errorf("write file: %w", err)
+			}
+			outFile.Close()
 		}
 	}
 	return nil

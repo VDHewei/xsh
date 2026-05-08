@@ -75,10 +75,40 @@ type CheckTask struct {
 	Prompt string
 }
 
+// AskResult Ask 结果
+type AskResult struct {
+	Prompt     string // 原始提示
+	Response   string // LLM 回复
+	Suggestion string // 提取的建议
+}
+
+// CheckResult Check 结果
+type CheckResult struct {
+	Prompt  string // 原始提示
+	Passed  bool   // 是否通过
+	Reason  string // 判断理由
+	Context string // 上下文信息
+}
+
 // TaskResult 任务执行结果
 type TaskResult struct {
 	Task    *Task
 	Success bool
 	Output  string
 	Error   error
+}
+
+// CustomCommand 自定义命令 (从 commands/ 目录加载)
+type CustomCommand struct {
+	Name    string  // 命令名 (文件名, 不含 .md)
+	File    string  // 文件路径
+	Content string  // 原始文件内容
+	Desc    string  // 命令描述 (从 ## 描述 提取)
+	Tasks   []*Task // 解析后的任务列表
+}
+
+// CommandLoader 命令加载器接口
+type CommandLoader interface {
+	Scan() ([]string, error)             // 扫描 commands/ 目录, 返回命令名称列表
+	Load(name string) (*CustomCommand, error) // 加载命令文件并解析
 }

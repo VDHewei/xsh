@@ -1,6 +1,8 @@
 package llm
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -231,7 +233,21 @@ func TestSetProxy(t *testing.T) {
 }
 
 func TestSetMirror(t *testing.T) {
+	// Save original
+	original := defaultMirror
+	defer func() { defaultMirror = original }()
+
 	SetMirror("https://hf-mirror.com")
+
+	if defaultMirror != "https://hf-mirror.com" {
+		t.Errorf("SetMirror failed: expected 'https://hf-mirror.com', got '%s'", defaultMirror)
+	}
+
+	// Verify NewDownloadConfig picks up the mirror
+	cfg := NewDownloadConfig()
+	if cfg.Mirror != "https://hf-mirror.com" {
+		t.Errorf("NewDownloadConfig Mirror should be set from defaultMirror, got '%s'", cfg.Mirror)
+	}
 }
 
 func TestExtractURLs(t *testing.T) {
@@ -753,4 +769,110 @@ func TestDeepSeekR1ProdMigrationAnalysis(t *testing.T) {
 	}
 
 	t.Logf("Direct inference result:\n%s", result)
+}
+
+func TestUntargz(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a tar.gz file with some content
+	archivePath := filepath.Join(tmpDir, "test.tar.gz")
+	f, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatalf("Failed to create archive: %v", err)
+	}
+
+	gzWriter := gzip.NewWriter(f)
+	tarWriter := tar.NewWriter(gzWriter)
+
+	// Add a directory
+	if err := tarWriter.WriteHeader(&tar.Header{
+		Name:     "testdir/",
+		Mode:     0755,
+		Typeflag: tar.TypeDir,
+	}); err != nil {
+		t.Fatalf("Failed to write dir header: %v", err)
+	}
+
+	// Add a file
+	fileContent := []byte("hello world from tar.gz")
+	if err := tarWriter.WriteHeader(&tar.Header{
+		Name: "testdir/hello.txt",
+		Mode: 0644,
+		Size: int64(len(fileContent)),
+	}); err != nil {
+		t.Fatalf("Failed to write file header: %v", err)
+	}
+	if _, err := tarWriter.Write(fileContent); err != nil {
+		t.Fatalf("Failed to write file content: %v", err)
+	}
+
+	tarWriter.Close()
+	gzWriter.Close()
+	f.Close()
+
+	// Extract
+	extractDir := filepath.Join(tmpDir, "extracted")
+	if err := untargz(archivePath, extractDir); err != nil {
+		t.Fatalf("untargz failed: %v", err)
+	}
+
+	// Verify
+	extractedFile := filepath.Join(extractDir, "testdir", "hello.txt")
+	data, err := os.ReadFile(extractedFile)
+	if err != nil {
+		t.Fatalf("Failed to read extracted file: %v", err)
+	}
+	if string(data) != "hello world from tar.gz" {
+		t.Errorf("Expected 'hello world from tar.gz', got '%s'", string(data))
+	}
+}
+
+func TestUntargzWithTgz(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a .tgz file (same format as tar.gz)
+	archivePath := filepath.Join(tmpDir, "test.tgz")
+	f, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatalf("Failed to create archive: %v", err)
+	}
+
+	gzWriter := gzip.NewWriter(f)
+	tarWriter := tar.NewWriter(gzWriter)
+
+	fileContent := []byte("tgz content here")
+	if err := tarWriter.WriteHeader(&tar.Header{
+		Name: "readme.txt",
+		Mode: 0644,
+		Size: int64(len(fileContent)),
+	}); err != nil {
+		t.Fatalf("Failed to write file header: %v", err)
+	}
+	if _, err := tarWriter.Write(fileContent); err != nil {
+		t.Fatalf("Failed to write file content: %v", err)
+	}
+
+	tarWriter.Close()
+	gzWriter.Close()
+	f.Close()
+
+	// Extract
+	extractDir := filepath.Join(tmpDir, "extracted")
+	if err := untargz(archivePath, extractDir); err != nil {
+		t.Fatalf("untargz failed for .tgz: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(extractDir, "readme.txt"))
+	if err != nil {
+		t.Fatalf("Failed to read extracted file: %v", err)
+	}
+	if string(data) != "tgz content here" {
+		t.Errorf("Expected 'tgz content here', got '%s'", string(data))
+	}
+}
+
+func TestUntargzNonexistent(t *testing.T) {
+	if err := untargz("/nonexistent/archive.tar.gz", t.TempDir()); err == nil {
+		t.Error("untargz should fail for nonexistent file")
+	}
 }

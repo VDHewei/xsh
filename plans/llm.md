@@ -63,14 +63,28 @@
 17. agent 人机询问 对应仓库审核结果，并记录更新文件
 ---
 
-## 开源项目清单 (待审核)
+## 开源项目清单 (已审核)
 
-| 项目 | 用途 | 仓库 | 审核状态 |
-|------|------|------|----------|
-| onnxruntime_purego | ONNX 模型加载推理 | https://github.com/getcharzp/onnxruntime-genai_purego | 待审核 |
-| tview | 终端 UI 框架 | https://github.com/rivo/tview | 待审核 |
-| tcell | 终端单元格库 | https://github.com/gdamore/tcell | 待审核 |
-| purego | CGo-free FFI | https://github.com/ebitengine/purego | 待审核 |
-| - | SSH 客户端 | golang.org/x/crypto (标准库扩展) | 待审核 |
-| - | gRPC 客户端 | google.golang.org/grpc | 待审核 |
-| openClaw/goose | 自定义命令解析参考 | 待确认 | 待调研 |
+| 项目 | 用途 | 仓库 | 许可证 | 审核状态 |
+|------|------|------|--------|----------|
+| onnxruntime-genai_purego | ONNX 模型加载推理 | https://github.com/getcharzp/onnxruntime-genai_purego | MIT | ✅ 已审核 |
+| tview | 终端 UI 框架 | https://github.com/rivo/tview | MIT | ✅ 已审核 |
+| tcell | 终端单元格库 | https://github.com/gdamore/tcell | Apache-2.0 | ✅ 已审核 |
+| purego | CGo-free FFI | https://github.com/ebitengine/purego | Apache-2.0 | ✅ 已审核 |
+| toml | TOML 配置解析 | https://github.com/BurntSushi/toml | MIT | ✅ 已审核 |
+| golang.org/x/crypto | SSH 客户端 | https://cs.opensource.google/go/x/crypto | BSD-3-Clause | ✅ 已审核 |
+| golang.org/x/net | HTTP/gRPC 网络 | https://cs.opensource.google/go/x/net | BSD-3-Clause | ✅ 已审核 |
+| golang.org/x/sys | 系统调用 (Windows locale) | https://cs.opensource.google/go/x/sys | BSD-3-Clause | ✅ 已审核 |
+| golang.org/x/term | 终端 I/O | https://cs.opensource.google/go/x/term | BSD-3-Clause | ✅ 已审核 |
+| golang.org/x/text | 文本编码处理 | https://cs.opensource.google/go/x/text | BSD-3-Clause | ✅ 已审核 |
+| google.golang.org/grpc | gRPC 客户端 | https://github.com/grpc/grpc-go | Apache-2.0 | ✅ 已审核 |
+| google.golang.org/protobuf | Protocol Buffers | https://github.com/protocolbuffers/protobuf-go | BSD-3-Clause | ✅ 已审核 |
+| genproto/googleapis/rpc | gRPC status/proto | https://github.com/googleapis/go-genproto | Apache-2.0 | ✅ 已审核 |
+| go-colorful | 颜色处理 | https://github.com/lucasb-eyer/go-colorful | MIT | ✅ 已审核 |
+| go-runewidth | 字符宽度计算 | https://github.com/mattn/go-runewidth | MIT | ✅ 已审核 |
+| uniseg | Unicode 分段 | https://github.com/rivo/uniseg | MIT | ✅ 已审核 |
+| encoding | 字符编码 | https://github.com/gdamore/encoding | Apache-2.0 | ✅ 已审核 |
+| gotool | 构建工具 | https://github.com/up-zero/gotool | MIT | ✅ 已审核 |
+
+审核日期: 2026-05-08
+审核方法: GitHub API license 字段 + 仓库 LICENSE 文件确认

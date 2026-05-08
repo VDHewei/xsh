@@ -18,11 +18,14 @@ type DownloadConfig struct {
 	CacheDir string // 缓存目录
 }
 
+// defaultMirror 全局默认镜像站
+var defaultMirror string
+
 // NewDownloadConfig 创建默认下载配置
 func NewDownloadConfig() *DownloadConfig {
 	return &DownloadConfig{
 		Proxy:    "",
-		Mirror:   "",
+		Mirror:   defaultMirror,
 		Token:    "",
 		CacheDir: "models",
 	}
@@ -295,5 +298,5 @@ func SetProxy(proxy string) {
 
 // SetMirror 设置镜像站
 func SetMirror(mirror string) {
-	_ = mirror
+	defaultMirror = mirror
 }

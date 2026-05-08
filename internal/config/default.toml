@@ -1,0 +1,36 @@
+# xsh 配置文件
+# 放置于当前目录、家目录(~/.xsh.toml) 或 xsh 安装目录均可
+
+language = ""  # 留空 = 自动检测系统语言, 可选: "zh-CN", "zh-TW", "en"
+
+[style]
+header = "green"
+success = "green"
+error = "red"
+progress = "yellow"
+border = "white"
+selection = "cyan"
+
+[layout]
+command_list_width = 25
+
+[i18n]
+header = "xsh - 任务执行工具"
+task_list_title = "任务列表"
+progress_title = "执行进度"
+input_label = "加载任务文件: "
+input_title = "输入文件路径"
+input_placeholder = "请输入任务文件路径 (如: tests/data/prod-migration-form-uat.txt)"
+cmd_list_title = "命令列表"
+waiting_text = "等待加载任务文件..."
+tasks_loaded_fmt = "已加载 %d 个任务，按 Enter 开始执行"
+tasks_loaded_cmd_fmt = "已加载 command: %s, %d 个任务"
+task_executing_fmt = "正在执行 [%d/%d]: %s"
+all_done_text = "所有任务执行完成!"
+invalid_path_text = "请输入文件路径"
+parse_failed_fmt = "解析文件失败: %v"
+continue_button = "继续"
+skip_button = "跳过"
+exit_button = "退出"
+ask_title = "Ask LLM 分析"
+check_title = "Check 检查结果"

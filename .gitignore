@@ -9,3 +9,9 @@ lib/
 models/
 pkg/llm/lib/
 tests/data/*.txt
+*.ps1
+.vscode/extensions/
+.xsh.toml
+*.dll
+*.so
+*.dylib

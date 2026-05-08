@@ -1,4 +1,4 @@
-package main
+package tests
 
 import (
 	"encoding/json"
@@ -20,9 +20,9 @@ type TaskStep struct {
 
 // TaskResult 任务结果
 type TaskResult struct {
-	Plan    string        `json:"plan"`
-	Steps   []TaskStep    `json:"steps"`
-	Results []StepResult  `json:"results"`
+	Plan    string       `json:"plan"`
+	Steps   []TaskStep   `json:"steps"`
+	Results []StepResult `json:"results"`
 }
 
 // StepResult 步骤结果
@@ -285,9 +285,9 @@ func TestDefaultOnnxRuntimeLibraryPath(t *testing.T) {
 
 // TestBuildTaskPrompt 测试构建任务提示
 func TestBuildTaskPrompt(t *testing.T) {
-	prompt := buildTaskPrompt("Sample migration content")
+	prompt := llm.BuildTaskPrompt("Sample migration content")
 	if prompt == "" {
-		t.Error("buildTaskPrompt should return non-empty string")
+		t.Error("BuildTaskPrompt should return non-empty string")
 	}
 	t.Logf("Prompt length: %d", len(prompt))
 }

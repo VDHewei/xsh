@@ -78,7 +78,7 @@ func main() {
 	}
 }
 
-// runTestMode 运行测试模式
+// runTestMode 运行测试模式 (支持多模型对比)
 func runTestMode() {
 	fmt.Println("=== ONNX GenAI LLM 任务规划测试 ===")
 
@@ -92,28 +92,96 @@ func runTestMode() {
 
 	fmt.Printf("输入: %s\n\n", testFile)
 
-	// 尝试查找模型目录
-	modelDir := findModelDir()
-	if modelDir == "" {
-		fmt.Println("未找到模型目录，使用 Mock 推理...")
-		result := llm.MockInfer(content)
-		fmt.Printf("推理结果:\n%s\n", result)
-		return
+	// 确保动态库存在
+	_ = llm.DownloadOnnxRuntimeGenAILibrary()
+
+	var results []modelTestResult
+
+	// 测试 DeepSeek R1
+	fmt.Println("--- DeepSeek R1 ---")
+	dsDir := findModelDir()
+	if dsDir != "" {
+		results = append(results, testModelInference(dsDir, "deepseek-r1-distill", content))
+	} else {
+		fmt.Println("DeepSeek R1 模型未找到")
 	}
 
+	fmt.Println()
+
+	// 测试 GLM5.1
+	fmt.Println("--- GLM5.1 ---")
+	glmDir := findGLM51Dir()
+	if glmDir != "" {
+		results = append(results, testModelInference(glmDir, "glm5.1-distill", content))
+	} else {
+		fmt.Println("GLM5.1 模型未找到, 尝试使用 Mock")
+		analyzer := llm.NewTaskAnalyzer()
+		tasks, err := analyzer.AnalyzeContent(content)
+		results = append(results, modelTestResult{"glm5.1-distill (mock)", len(tasks), err})
+	}
+
+	// 打印对比结果
+	fmt.Println("\n=== 对比结果 ===")
+	for _, r := range results {
+		status := "OK"
+		if r.err != nil {
+			status = fmt.Sprintf("ERROR: %v", r.err)
+		}
+		fmt.Printf("  %-30s %3d tasks  %s\n", r.modelName, r.taskCount, status)
+	}
+}
+
+type modelTestResult struct {
+	modelName string
+	taskCount int
+	err       error
+}
+
+// testModelInference 测试单个模型推理
+func testModelInference(modelDir, modelName, content string) modelTestResult {
 	fmt.Printf("模型目录: %s\n", modelDir)
 
-	// 确保动态库存在
-	if err := llm.DownloadOnnxRuntimeGenAILibrary(); err != nil {
-		fmt.Printf("Warning: failed to ensure genai library: %v\n", err)
-		fmt.Println("使用 Mock 推理...")
-		result := llm.MockInfer(content)
-		fmt.Printf("推理结果:\n%s\n", result)
-		return
+	model := llm.NewModel(modelName)
+	if err := model.Load(modelDir); err != nil {
+		fmt.Printf("加载模型失败: %v\n", err)
+		analyzer := llm.NewTaskAnalyzer()
+		tasks, _ := analyzer.AnalyzeContent(content)
+		return modelTestResult{modelName + " (mock)", len(tasks), nil}
+	}
+	defer model.Unload()
+
+	fmt.Println("模型加载成功!")
+
+	analyzer := llm.NewTaskAnalyzer()
+	analyzer.SetModel(model)
+
+	fmt.Println("执行任务分析...")
+	tasks, err := analyzer.AnalyzeContent(content)
+	if err != nil {
+		fmt.Printf("分析失败: %v\n", err)
+		return modelTestResult{modelName, 0, err}
 	}
 
-	// 使用 GenAI 进行推理
-	testWithGenAI(modelDir, content)
+	fmt.Printf("提取任务: %d 个\n", len(tasks))
+	return modelTestResult{modelName, len(tasks), nil}
+}
+
+// findGLM51Dir 查找 GLM5.1 模型目录
+func findGLM51Dir() string {
+	candidates := []string{
+		"models/glm5.1-distill-onnx",
+		"models/yasserrmd_glm5.1-distill-onnx",
+		"models/glm5.1-distill-onnx/cpu_and_mobile/cpu-int4-rtn-block-32-acc-level-4",
+	}
+	for _, dir := range candidates {
+		if _, err := os.Stat(dir + "/genai_config.json"); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(dir + "/model.onnx"); err == nil {
+			return dir
+		}
+	}
+	return ""
 }
 
 // findModelDir 查找模型目录
@@ -181,7 +249,7 @@ func testWithGenAI(modelDir, content string) {
 	fmt.Println("模型加载成功!")
 
 	// 构建任务分析提示
-	prompt := buildTaskPrompt(content)
+	prompt := llm.BuildTaskPrompt(content)
 
 	fmt.Println("\n执行推理...")
 	if *streamMode {
@@ -208,26 +276,6 @@ func testWithGenAI(modelDir, content string) {
 		}
 		fmt.Printf("\n推理结果:\n%s\n", result)
 	}
-}
-
-// buildTaskPrompt 构建任务分析提示
-func buildTaskPrompt(taskContent string) string {
-	return fmt.Sprintf(`你是一个任务规划和执行助手。请分析以下迁移步骤，提取出结构化任务列表。
-
-迁移步骤:
-%s
-
-请按以下格式输出，每行一个任务：
-[GET] <url> 用于 GET 请求
-header: Xxxx=xxx
-[POST] <url> 用于 POST 请求
-header: XXX=xxx
-body: {}
-@ask: <描述> 用于需要用户确认的步骤
-@wait: <时长> 用于等待步骤 (如 @wait: 10min)
-@check: <描述> 用于验证步骤
-
-只输出任务列表，不要其他内容。`, taskContent)
 }
 
 // runLLMMode 运行 LLM 模式

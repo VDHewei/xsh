@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/VDHewei/xsh/internal/types"
+	llm "github.com/VDHewei/xsh/pkg/llm"
 	"golang.org/x/crypto/ssh"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -19,9 +20,10 @@ import (
 
 // Executor 任务执行器
 type Executor struct {
-	retryCfg *RetryConfig
-	sshCfg   *ssh.ClientConfig
-	llmModel interface{} // LLM 模型引用, T4 阶段注入
+	retryCfg   *RetryConfig
+	sshCfg     *ssh.ClientConfig
+	llmModel   *llm.Model // LLM 模型引用
+	lastOutput string     // 上一次执行输出, 用于 Check 上下文
 }
 
 // NewExecutor 创建执行器
@@ -31,8 +33,8 @@ func NewExecutor() *Executor {
 	}
 }
 
-// SetLLMModel 注入 LLM 模型 (T4 阶段使用)
-func (e *Executor) SetLLMModel(model interface{}) {
+// SetLLMModel 注入 LLM 模型到执行器
+func (e *Executor) SetLLMModel(model *llm.Model) {
 	e.llmModel = model
 }
 
@@ -71,9 +73,9 @@ func (e *Executor) executeTask(task *types.Task) types.TaskResult {
 	case types.TaskTypeWait:
 		output = e.executeWait(task.Wait)
 	case types.TaskTypeAsk:
-		output = fmt.Sprintf("@ask: %s - 需要LLM分析", task.Ask.Prompt)
+		output, err = e.executeAsk(task.Ask)
 	case types.TaskTypeCheck:
-		output = fmt.Sprintf("@check: %s - 需要LLM分析", task.Check.Prompt)
+		output, err = e.executeCheck(task.Check)
 	default:
 		return types.TaskResult{
 			Task:    task,
@@ -92,6 +94,7 @@ func (e *Executor) executeTask(task *types.Task) types.TaskResult {
 		}
 	}
 
+	e.lastOutput = output
 	return types.TaskResult{
 		Task:    task,
 		Success: true,
@@ -242,6 +245,30 @@ func invokeGRPCMethod(ctx context.Context, conn *grpc.ClientConn, method, body s
 	}
 
 	return fmt.Sprintf("%v", resp.AsInterface()), nil
+}
+
+// --- Ask/Check Execution (LLM) ---
+
+func (e *Executor) executeAsk(askTask *types.AskTask) (string, error) {
+	askExec := llm.NewAskExecutor(e.llmModel)
+	result, err := askExec.Execute(askTask)
+	if err != nil {
+		return fmt.Sprintf("[ASK] %s", askTask.Prompt), err
+	}
+	return fmt.Sprintf("[ASK] %s -> %s", askTask.Prompt, result.Suggestion), nil
+}
+
+func (e *Executor) executeCheck(checkTask *types.CheckTask) (string, error) {
+	checkExec := llm.NewCheckExecutor(e.llmModel)
+	result, err := checkExec.Execute(checkTask, e.lastOutput)
+	if err != nil {
+		return fmt.Sprintf("[CHECK] %s", checkTask.Prompt), err
+	}
+	if result.Passed {
+		return fmt.Sprintf("[CHECK] %s -> PASS: %s", checkTask.Prompt, result.Reason), nil
+	}
+	return fmt.Sprintf("[CHECK] %s -> FAIL: %s", checkTask.Prompt, result.Reason),
+		fmt.Errorf("check failed: %s", result.Reason)
 }
 
 // --- Wait Execution ---
