@@ -51,6 +51,35 @@ Migration from prod to UAT:
 
 **Latency:** ~61s (full inference with task parsing)
 
+### 4. Prod Migration File Analysis Test (PASS)
+
+**Input File:** tests/data/prod-migration-form-uat.txt
+
+**Content:** 生产环境迁移到 UAT 流程文档，包含 8 个步骤、多个 HTTP 请求和确认指令。
+
+**Extracted Tasks (16 total):**
+- Task[0]: type=http raw=[GET] http://prod-api.example.com/health
+- Task[1]: type=check raw=@check: 生产环境 API 健康状态是否正常？
+- Task[2]: type=http raw=[POST] http://prod-api.example.com/api/backup
+- Task[3]: type=check raw=@check: 数据备份是否完成？请检查备份文件大小和时间戳
+- Task[4]: type=wait raw=@wait: 10min
+- Task[5]: type=ask raw=@ask: 备份等待时间已到，是否确认备份已完成？
+- Task[6]: type=http raw=[POST] http://uat-api.example.com/api/migrate
+- Task[7]: type=check raw=@check: 数据库迁移是否成功？请验证迁移日志
+- Task[8]: type=check raw=@check: UAT 环境 API 健康状态是否正常？
+- Task[9]: type=ask raw=@ask: 数据一致性校验结果是否通过？
+- Task[10]: type=check raw=@check: 迁移完成通知是否已发送？
+- Task[11-15]: Additional LLM-generated check/ask tasks
+
+**Direct Inference Result:**
+```
+[GET] http://prod-api.example.com/health
+@check: 生产环境 API 健康状态是否正常？
+[POST] ...
+```
+
+**Latency:** ~23s
+
 ## Model Info
 
 - **Type:** qwen2

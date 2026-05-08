@@ -411,3 +411,59 @@ func TestDeepSeekR1TaskAnalysis(t *testing.T) {
 		t.Logf("Task[%d]: type=%s raw=%s", i, task.Type, task.Raw)
 	}
 }
+
+func TestDeepSeekR1ProdMigrationAnalysis(t *testing.T) {
+	modelDir := deepseekModelDir()
+
+	configPath := filepath.Join(modelDir, "genai_config.json")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Skipf("Model not found at %s, skipping prod migration test", modelDir)
+	}
+
+	model := NewModel("deepseek-r1-distill-qwen-1.5B")
+	if err := model.Load(modelDir); err != nil {
+		t.Fatalf("Failed to load model: %v", err)
+	}
+	defer model.Unload()
+
+	// Read the real prod-migration-form-uat.txt
+	migrationFile := filepath.Join(projectRoot(), "tests", "data", "prod-migration-form-uat.txt")
+	content, err := os.ReadFile(migrationFile)
+	if err != nil {
+		t.Fatalf("Failed to read migration file: %v", err)
+	}
+
+	analyzer := NewTaskAnalyzer()
+	analyzer.SetModel(model)
+
+	tasks, err := analyzer.AnalyzeContent(string(content))
+	if err != nil {
+		t.Fatalf("AnalyzeContent failed: %v", err)
+	}
+
+	if len(tasks) == 0 {
+		t.Error("AnalyzeContent should return at least one task from prod migration file")
+	}
+
+	t.Logf("Total tasks extracted: %d", len(tasks))
+	for i, task := range tasks {
+		t.Logf("Task[%d]: type=%s raw=%s", i, task.Type, task.Raw)
+	}
+
+	// Also test direct inference with migration content as prompt
+	cfg := NewConfig()
+	cfg.MaxLength = 512
+	cfg.Temperature = 0.6
+
+	prompt := buildAnalyzePrompt(string(content))
+	result, err := model.InferWithConfig(prompt, cfg)
+	if err != nil {
+		t.Fatalf("Direct inference failed: %v", err)
+	}
+
+	if result == "" {
+		t.Error("Direct inference should return non-empty string")
+	}
+
+	t.Logf("Direct inference result:\n%s", result)
+}
