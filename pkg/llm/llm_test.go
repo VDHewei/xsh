@@ -2,8 +2,22 @@ package llm
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
+
+// projectRoot returns the project root directory
+func projectRoot() string {
+	_, filename, _, _ := runtime.Caller(0)
+	// pkg/llm/llm_test.go -> project root
+	return filepath.Join(filepath.Dir(filename), "..", "..")
+}
+
+func deepseekModelDir() string {
+	return filepath.Join(projectRoot(), "models", "deepseek-r1-distill-qwen-1.5B", "cpu_and_mobile", "cpu-int4-rtn-block-32-acc-level-4")
+}
 
 func TestMockInfer(t *testing.T) {
 	result := MockInfer("Test input")
@@ -287,4 +301,113 @@ func TestBuildAnalyzePrompt(t *testing.T) {
 		t.Error("buildAnalyzePrompt should return non-empty string")
 	}
 	t.Logf("Prompt length: %d", len(prompt))
+}
+
+func TestDeepSeekR1RealInference(t *testing.T) {
+	modelDir := deepseekModelDir()
+
+	// Verify model files exist
+	configPath := filepath.Join(modelDir, "genai_config.json")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Skipf("Model not found at %s, skipping real inference test", modelDir)
+	}
+
+	model := NewModel("deepseek-r1-distill-qwen-1.5B")
+	if err := model.Load(modelDir); err != nil {
+		t.Fatalf("Failed to load model: %v", err)
+	}
+	defer model.Unload()
+
+	if !model.IsLoaded() {
+		t.Fatal("Model should be loaded after Load()")
+	}
+
+	// Test real inference with a simple prompt
+	result, err := model.Infer("What is 2+3?")
+	if err != nil {
+		t.Fatalf("Inference failed: %v", err)
+	}
+
+	if result == "" {
+		t.Error("Inference should return non-empty string")
+	}
+
+	t.Logf("Inference result: %s", result)
+}
+
+func TestDeepSeekR1StreamInference(t *testing.T) {
+	modelDir := deepseekModelDir()
+
+	configPath := filepath.Join(modelDir, "genai_config.json")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Skipf("Model not found at %s, skipping stream inference test", modelDir)
+	}
+
+	model := NewModel("deepseek-r1-distill-qwen-1.5B")
+	if err := model.Load(modelDir); err != nil {
+		t.Fatalf("Failed to load model: %v", err)
+	}
+	defer model.Unload()
+
+	var tokens []string
+	opts := GenerateOptions{
+		MaxTokens:   256,
+		Temperature: 0.6,
+		TopP:        0.95,
+		DoSample:    true,
+		StopOnEos:   true,
+	}
+
+	err := model.InferStream("Hello", opts, func(text string) error {
+		t.Logf("Token: %s", text)
+		tokens = append(tokens, text)
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Stream inference failed: %v", err)
+	}
+
+	if len(tokens) == 0 {
+		t.Error("Stream inference should produce at least one token")
+	}
+
+	t.Logf("Stream result: %s", strings.Join(tokens, ""))
+}
+
+func TestDeepSeekR1TaskAnalysis(t *testing.T) {
+	modelDir := deepseekModelDir()
+
+	configPath := filepath.Join(modelDir, "genai_config.json")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Skipf("Model not found at %s, skipping task analysis test", modelDir)
+	}
+
+	model := NewModel("deepseek-r1-distill-qwen-1.5B")
+	if err := model.Load(modelDir); err != nil {
+		t.Fatalf("Failed to load model: %v", err)
+	}
+	defer model.Unload()
+
+	analyzer := NewTaskAnalyzer()
+	analyzer.SetModel(model)
+
+	content := `Migration from prod to UAT:
+1. Check service health at http://example.com/api/health
+2. Deploy new version at http://example.com/api/deploy
+3. Wait 10 minutes for deployment
+4. Verify deployment result`
+
+	tasks, err := analyzer.AnalyzeContent(content)
+	if err != nil {
+		t.Fatalf("AnalyzeContent failed: %v", err)
+	}
+
+	if len(tasks) == 0 {
+		t.Error("AnalyzeContent should return at least one task")
+	}
+
+	for i, task := range tasks {
+		t.Logf("Task[%d]: type=%s raw=%s", i, task.Type, task.Raw)
+	}
 }
