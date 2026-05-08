@@ -9,9 +9,9 @@ import (
 
 // CLI Commands
 var (
-	modelSearchCmd = flag.NewFlagSet("model search", flag.ExitOnError)
-	modelListCmd  = flag.NewFlagSet("model list", flag.ExitOnError)
-	modelSelectCmd = flag.NewFlagSet("model select", flag.ExitOnError)
+	modelSearchCmd  = flag.NewFlagSet("model search", flag.ExitOnError)
+	modelListCmd    = flag.NewFlagSet("model list", flag.ExitOnError)
+	modelSelectCmd  = flag.NewFlagSet("model select", flag.ExitOnError)
 )
 
 // ModelSearch 搜索模型
@@ -74,11 +74,36 @@ func ModelSelect(modelDir, modelName string) {
 	_ = cfg
 }
 
-// ParseModelCommand 解析模型命令
-func ParseModelCommand(args []string) {
+// ModelDownload 下载模型（通过短名称或完整 RepoID）
+func ModelDownload(name string, downloadDir string) error {
+	repoID := resolveModelRepo(name)
+	cfg := NewDownloadConfig()
+	cfg.CacheDir = downloadDir
+
+	fmt.Printf("Downloading model: %s\n", repoID)
+	fmt.Printf("Target directory: %s\n", downloadDir)
+
+	result, err := DownloadFromHuggingFace(repoID, cfg)
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	fmt.Printf("\nDownload complete:\n")
+	fmt.Printf("  Name:   %s\n", result.Name)
+	fmt.Printf("  Path:   %s\n", result.Path)
+	fmt.Printf("  RepoID: %s\n", result.RepoID)
+	if result.Size > 0 {
+		fmt.Printf("  Size:   %d bytes\n", result.Size)
+	}
+
+	return nil
+}
+
+// ParseModelCommand 解析模型命令，返回 error 供调用方处理
+func ParseModelCommand(args []string) error {
 	if len(args) < 2 {
 		printModelUsage()
-		return
+		return nil
 	}
 
 	cmd := args[1]
@@ -86,28 +111,39 @@ func ParseModelCommand(args []string) {
 
 	switch cmd {
 	case "search":
-		handleModelSearch(subArgs)
+		return handleModelSearch(subArgs)
 	case "list":
-		handleModelList(subArgs)
+		return handleModelList(subArgs)
 	case "select":
-		handleModelSelect(subArgs)
+		return handleModelSelect(subArgs)
+	case "download":
+		return handleModelDownload(subArgs)
 	default:
-		fmt.Printf("Unknown command: %s\n", cmd)
 		printModelUsage()
+		return fmt.Errorf("unknown command: %s", cmd)
 	}
 }
 
-func handleModelSearch(args []string) {
+func handleModelSearch(args []string) error {
 	if len(args) < 1 {
-		fmt.Println("Usage: xsh model search <query>")
-		os.Exit(1)
+		return fmt.Errorf("usage: xsh model search <query>")
 	}
 
 	query := strings.Join(args, " ")
-	ModelSearch(query)
+	cfg := NewDownloadConfig()
+	models, err := SearchModels(query, cfg)
+	if err != nil {
+		return fmt.Errorf("search error: %w", err)
+	}
+
+	fmt.Println("Search results:")
+	for _, model := range models {
+		fmt.Printf("  - %s\n", model)
+	}
+	return nil
 }
 
-func handleModelList(args []string) {
+func handleModelList(args []string) error {
 	modelDir := "models"
 	for i, arg := range args {
 		if arg == "-d" || arg == "--dir" {
@@ -116,13 +152,26 @@ func handleModelList(args []string) {
 			}
 		}
 	}
-	ModelList(modelDir)
+	models, err := ListModels(modelDir)
+	if err != nil {
+		return fmt.Errorf("list error: %w", err)
+	}
+
+	if len(models) == 0 {
+		fmt.Println("No models found")
+		return nil
+	}
+
+	fmt.Println("Available models:")
+	for _, model := range models {
+		fmt.Printf("  - %s\n", model)
+	}
+	return nil
 }
 
-func handleModelSelect(args []string) {
+func handleModelSelect(args []string) error {
 	if len(args) < 1 {
-		fmt.Println("Usage: xsh model select <model-name>")
-		os.Exit(1)
+		return fmt.Errorf("usage: xsh model select <model-name> [--dir <dir>]")
 	}
 
 	modelName := args[0]
@@ -136,14 +185,52 @@ func handleModelSelect(args []string) {
 		}
 	}
 
-	ModelSelect(modelDir, modelName)
+	modelPath := GetModelPath(modelDir, modelName)
+
+	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
+		return fmt.Errorf("model not found: %s", modelPath)
+	}
+
+	model := NewModel(modelName)
+	if err := model.Load(modelPath); err != nil {
+		return fmt.Errorf("load error: %w", err)
+	}
+
+	fmt.Printf("Selected model: %s\n", modelName)
+	fmt.Printf("Model path: %s\n", modelPath)
+
+	cfg := NewConfig()
+	cfg.ModelPath = modelPath
+	_ = cfg
+	return nil
+}
+
+func handleModelDownload(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: xsh model download <repo-id|model-name> [--dir <dir>]")
+	}
+
+	modelName := args[0]
+	downloadDir := "models"
+
+	for i, arg := range args {
+		if arg == "-d" || arg == "--dir" {
+			if i+1 < len(args) {
+				downloadDir = args[i+1]
+			}
+		}
+	}
+
+	return ModelDownload(modelName, downloadDir)
 }
 
 func printModelUsage() {
 	fmt.Println("Usage: xsh model <command>")
 	fmt.Println("")
 	fmt.Println("Commands:")
-	fmt.Println("  search <query>      Search models on HuggingFace")
-	fmt.Println("  list [-d <dir>]    List local models")
-	fmt.Println("  select <name>      Select a model to use")
+	fmt.Println("  search <query>              Search models on HuggingFace")
+	fmt.Println("  list [-d <dir>]            List local models")
+	fmt.Println("  select <name>              Select a model to use")
+	fmt.Println("  download <repo|name>       Download a model from HuggingFace")
+	fmt.Println("                             Use short name (deepseek, glm5.1) or full RepoID")
 }

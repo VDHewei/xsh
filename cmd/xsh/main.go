@@ -22,6 +22,15 @@ var (
 )
 
 func main() {
+	// model 子命令路由
+	if len(os.Args) > 1 && os.Args[1] == "model" {
+		if err := llm.ParseModelCommand(os.Args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	flag.Parse()
 
 	// 测试模式
@@ -210,7 +219,10 @@ func buildTaskPrompt(taskContent string) string {
 
 请按以下格式输出，每行一个任务：
 [GET] <url> 用于 GET 请求
+header: Xxxx=xxx
 [POST] <url> 用于 POST 请求
+header: XXX=xxx
+body: {}
 @ask: <描述> 用于需要用户确认的步骤
 @wait: <时长> 用于等待步骤 (如 @wait: 10min)
 @check: <描述> 用于验证步骤

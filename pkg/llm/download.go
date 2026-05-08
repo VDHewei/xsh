@@ -237,6 +237,17 @@ func DownloadWithMirror(repoID, mirror string) (*DownloadedModel, error) {
 	return DownloadFromHuggingFace(repoID, cfg)
 }
 
+// resolveModelRepo 根据候选模型名解析完整 HuggingFace RepoID
+// 如果 candidate 是已知的短名称（如 "deepseek", "glm5.1"），返回对应的完整 RepoID
+// 否则直接返回原值（视为用户直接提供的完整 RepoID）
+func resolveModelRepo(candidate string) string {
+	candidates := DefaultCandidateModels()
+	if repoID, ok := candidates[candidate]; ok {
+		return repoID
+	}
+	return candidate
+}
+
 // SearchModels 搜索 HuggingFace 模型
 func SearchModels(query string, cfg *DownloadConfig) ([]string, error) {
 	// 使用 HF API 进行搜索

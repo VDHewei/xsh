@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package mock;
+
+option go_package = "github.com/VDHewei/xsh/tests/servers/grpc/proto;mock";
+
+service MockService {
+  rpc HealthCheck(HealthRequest) returns (HealthResponse);
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc StreamExecute(ExecuteRequest) returns (stream ExecuteResponse);
+  rpc Timeout(TimeoutRequest) returns (TimeoutResponse);
+  rpc Echo(EchoRequest) returns (EchoResponse);
+}
+
+message HealthRequest {
+  string service = 1;
+}
+
+message HealthResponse {
+  bool healthy = 1;
+  string message = 2;
+  int64 timestamp = 3;
+}
+
+message ExecuteRequest {
+  string method = 1;
+  string payload = 2;
+  map<string, string> headers = 3;
+}
+
+message ExecuteResponse {
+  bool success = 1;
+  string output = 2;
+  string error = 3;
+}
+
+message TimeoutRequest {
+  int32 delay_seconds = 1;
+}
+
+message TimeoutResponse {
+  string message = 1;
+}
+
+message EchoRequest {
+  string method = 1;
+  string payload = 2;
+  map<string, string> headers = 3;
+}
+
+message EchoResponse {
+  string method = 1;
+  string payload = 2;
+  map<string, string> headers = 3;
+}

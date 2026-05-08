@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/VDHewei/xsh/internal/executor"
 	"github.com/VDHewei/xsh/internal/parser"
 	"github.com/VDHewei/xsh/internal/types"
 	"github.com/gdamore/tcell/v2"
@@ -23,6 +24,7 @@ type App struct {
 	results    []string
 	inputFile  string
 	outputFile string
+	exec       *executor.Executor
 }
 
 // NewApp 创建新应用
@@ -36,6 +38,7 @@ func NewApp() *App {
 		tasks:      nil,
 		currentIdx: 0,
 		results:    []string{},
+		exec:       executor.NewExecutor(),
 	}
 }
 
@@ -183,14 +186,15 @@ func (a *App) runNextTask() {
 }
 
 func (a *App) executeTask(task *types.Task) string {
-	switch task.Type {
-	case types.TaskTypeHTTP:
-		return executeHTTP(task.HTTP)
-	case types.TaskTypeWait:
-		return executeWait(task.Wait)
-	default:
-		return fmt.Sprintf("[%s] %s", task.Type, task.Raw)
+	result := a.exec.ExecuteTasks([]*types.Task{task})
+	if len(result) > 0 {
+		r := result[0]
+		if r.Success {
+			return r.Output
+		}
+		return fmt.Sprintf("[ERROR] %s: %v", r.Output, r.Error)
 	}
+	return fmt.Sprintf("[SKIP] %s", task.Raw)
 }
 
 func (a *App) showConfirmDialog(prompt string) {
@@ -222,10 +226,3 @@ func (a *App) saveResults() {
 	// TODO: 保存结果到文件
 }
 
-func executeHTTP(httpTask *types.HTTPTask) string {
-	return fmt.Sprintf("[HTTP] %s %s", httpTask.Method, httpTask.URL)
-}
-
-func executeWait(waitTask *types.WaitTask) string {
-	return fmt.Sprintf("[WAIT] %s", waitTask.Duration)
-}

@@ -608,6 +608,14 @@ func ListModels(modelDir string) ([]string, error) {
 	return models, nil
 }
 
+// DefaultCandidateModels 返回默认候选模型列表（短名称 -> HuggingFace RepoID）
+func DefaultCandidateModels() map[string]string {
+	return map[string]string{
+		"deepseek": "yasserrmd/deepseek-r1-distill-qwen-onnx",
+		"glm5.1":   "yasserrmd/glm5.1-distill-onnx",
+	}
+}
+
 // MockInfer 模拟推理（用于测试，无模型时的后备方案）
 func MockInfer(prompt string) string {
 	return fmt.Sprintf("[Mock LLM Response]\nProcessed: %s\n\nThis is a mock response for testing purposes.", prompt)
