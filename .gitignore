@@ -8,3 +8,4 @@ onnxruntime_extracted/
 lib/
 models/
 pkg/llm/lib/
+tests/data/*.txt
