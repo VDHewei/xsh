@@ -53,10 +53,11 @@ type SSHTask struct {
 
 // GRPCTask gRPC 任务
 type GRPCTask struct {
-	Host   string
-	Port   string
-	Method string
-	Body   string
+	Host    string
+	Port    string
+	Method  string
+	Headers map[string]string
+	Body    string
 }
 
 // AskTask 询问任务

@@ -278,6 +278,293 @@ func TestParseLLMResultEmpty(t *testing.T) {
 	}
 }
 
+func TestParseHTTPRequestWithHeaders(t *testing.T) {
+	result := `[GET] http://example.com/api/health header:Authorization=Bearer_token123 header:X-Request-Id=abc`
+	tasks := parseLLMResult(result)
+	if len(tasks) != 1 {
+		t.Fatalf("Expected 1 task, got %d", len(tasks))
+	}
+
+	task := tasks[0]
+	if task.Type != "http" {
+		t.Errorf("Expected http type, got %s", task.Type)
+	}
+	if task.HTTP == nil {
+		t.Fatal("HTTP task should not be nil")
+	}
+	if task.HTTP.URL != "http://example.com/api/health" {
+		t.Errorf("Expected URL 'http://example.com/api/health', got '%s'", task.HTTP.URL)
+	}
+	if task.HTTP.Method != "GET" {
+		t.Errorf("Expected GET, got %s", task.HTTP.Method)
+	}
+	if len(task.HTTP.Headers) != 2 {
+		t.Fatalf("Expected 2 headers, got %d", len(task.HTTP.Headers))
+	}
+	if task.HTTP.Headers["Authorization"] != "Bearer_token123" {
+		t.Errorf("Expected Authorization=Bearer_token123, got %s", task.HTTP.Headers["Authorization"])
+	}
+	if task.HTTP.Headers["X-Request-Id"] != "abc" {
+		t.Errorf("Expected X-Request-Id=abc, got %s", task.HTTP.Headers["X-Request-Id"])
+	}
+}
+
+func TestParseHTTPPostWithHeadersAndBody(t *testing.T) {
+	result := `[POST] http://example.com/api/deploy header:Content-Type=application/json header:Authorization=Bearer_token body:{"name":"test","version":"1.0"}`
+	tasks := parseLLMResult(result)
+	if len(tasks) != 1 {
+		t.Fatalf("Expected 1 task, got %d", len(tasks))
+	}
+
+	task := tasks[0]
+	if task.HTTP.Method != "POST" {
+		t.Errorf("Expected POST, got %s", task.HTTP.Method)
+	}
+	if task.HTTP.URL != "http://example.com/api/deploy" {
+		t.Errorf("Expected URL 'http://example.com/api/deploy', got '%s'", task.HTTP.URL)
+	}
+	if len(task.HTTP.Headers) != 2 {
+		t.Fatalf("Expected 2 headers, got %d: %v", len(task.HTTP.Headers), task.HTTP.Headers)
+	}
+	if task.HTTP.Headers["Content-Type"] != "application/json" {
+		t.Errorf("Expected Content-Type=application/json, got %s", task.HTTP.Headers["Content-Type"])
+	}
+	if task.HTTP.Body != `{"name":"test","version":"1.0"}` {
+		t.Errorf(`Expected body '{"name":"test","version":"1.0"}', got '%s'`, task.HTTP.Body)
+	}
+}
+
+func TestParseHTTPPutWithBody(t *testing.T) {
+	result := `[PUT] http://example.com/api/config body:{"key":"value"}`
+	tasks := parseLLMResult(result)
+	if len(tasks) != 1 {
+		t.Fatalf("Expected 1 task, got %d", len(tasks))
+	}
+
+	task := tasks[0]
+	if task.HTTP.Method != "PUT" {
+		t.Errorf("Expected PUT, got %s", task.HTTP.Method)
+	}
+	if task.HTTP.Body != `{"key":"value"}` {
+		t.Errorf(`Expected body '{"key":"value"}', got '%s'`, task.HTTP.Body)
+	}
+	if len(task.HTTP.Headers) != 0 {
+		t.Errorf("Expected 0 headers, got %d", len(task.HTTP.Headers))
+	}
+}
+
+func TestParseHTTPDeleteWithHeaders(t *testing.T) {
+	result := `[DELETE] http://example.com/api/resource/123 header:Authorization=Bearer_token`
+	tasks := parseLLMResult(result)
+	if len(tasks) != 1 {
+		t.Fatalf("Expected 1 task, got %d", len(tasks))
+	}
+
+	task := tasks[0]
+	if task.HTTP.Method != "DELETE" {
+		t.Errorf("Expected DELETE, got %s", task.HTTP.Method)
+	}
+	if task.HTTP.Headers["Authorization"] != "Bearer_token" {
+		t.Errorf("Expected Authorization=Bearer_token, got %s", task.HTTP.Headers["Authorization"])
+	}
+}
+
+func TestParseGRPCTaskWithHeadersAndBody(t *testing.T) {
+	result := `[GRPC] localhost:50051/api.Service/Deploy header:Authorization=Bearer_token body:{"name":"test"}`
+	tasks := parseLLMResult(result)
+	if len(tasks) != 1 {
+		t.Fatalf("Expected 1 task, got %d", len(tasks))
+	}
+
+	task := tasks[0]
+	if task.Type != "grpc" {
+		t.Errorf("Expected grpc type, got %s", task.Type)
+	}
+	if task.GRPC == nil {
+		t.Fatal("GRPC task should not be nil")
+	}
+	if task.GRPC.Host != "localhost" {
+		t.Errorf("Expected host 'localhost', got '%s'", task.GRPC.Host)
+	}
+	if task.GRPC.Port != "50051" {
+		t.Errorf("Expected port '50051', got '%s'", task.GRPC.Port)
+	}
+	if task.GRPC.Method != "api.Service/Deploy" {
+		t.Errorf("Expected method 'api.Service/Deploy', got '%s'", task.GRPC.Method)
+	}
+	if task.GRPC.Headers["Authorization"] != "Bearer_token" {
+		t.Errorf("Expected Authorization=Bearer_token, got %s", task.GRPC.Headers["Authorization"])
+	}
+	if task.GRPC.Body != `{"name":"test"}` {
+		t.Errorf(`Expected body '{"name":"test"}', got '%s'`, task.GRPC.Body)
+	}
+}
+
+func TestParseHTTPWithoutHeadersOrBody(t *testing.T) {
+	result := `[GET] http://example.com/api/health`
+	tasks := parseLLMResult(result)
+	if len(tasks) != 1 {
+		t.Fatalf("Expected 1 task, got %d", len(tasks))
+	}
+
+	task := tasks[0]
+	if task.HTTP.URL != "http://example.com/api/health" {
+		t.Errorf("Expected URL 'http://example.com/api/health', got '%s'", task.HTTP.URL)
+	}
+	if len(task.HTTP.Headers) != 0 {
+		t.Errorf("Expected 0 headers, got %d", len(task.HTTP.Headers))
+	}
+	if task.HTTP.Body != "" {
+		t.Errorf("Expected empty body, got '%s'", task.HTTP.Body)
+	}
+}
+
+func TestParseMixedTasksWithHeadersAndBody(t *testing.T) {
+	result := `[GET] http://example.com/api/health header:Accept=application/json
+[POST] http://example.com/api/deploy header:Content-Type=application/json header:Authorization=Bearer_tok body:{"app":"web","version":"2.0"}
+[PUT] http://example.com/api/config body:{"debug":true}
+[DELETE] http://example.com/api/old header:Authorization=Bearer_tok
+[GRPC] grpc-server:9000/tx.Transaction/Commit header:token=abc123 body:{"txid":"001"}
+@ask: 是否继续执行?
+@wait: 10min
+@check: 验证部署结果`
+
+	tasks := parseLLMResult(result)
+	if len(tasks) != 8 {
+		t.Fatalf("Expected 8 tasks, got %d", len(tasks))
+	}
+
+	// GET with Accept header
+	if tasks[0].HTTP.Headers["Accept"] != "application/json" {
+		t.Errorf("GET: Expected Accept=application/json, got %s", tasks[0].HTTP.Headers["Accept"])
+	}
+
+	// POST with 2 headers + body
+	if len(tasks[1].HTTP.Headers) != 2 {
+		t.Errorf("POST: Expected 2 headers, got %d", len(tasks[1].HTTP.Headers))
+	}
+	if tasks[1].HTTP.Body != `{"app":"web","version":"2.0"}` {
+		t.Errorf("POST: Expected body, got '%s'", tasks[1].HTTP.Body)
+	}
+
+	// PUT with body only
+	if tasks[2].HTTP.Body != `{"debug":true}` {
+		t.Errorf(`PUT: Expected body '{"debug":true}', got '%s'`, tasks[2].HTTP.Body)
+	}
+
+	// DELETE with Auth header
+	if tasks[3].HTTP.Headers["Authorization"] != "Bearer_tok" {
+		t.Errorf("DELETE: Expected Authorization=Bearer_tok, got %s", tasks[3].HTTP.Headers["Authorization"])
+	}
+
+	// GRPC with headers + body
+	if tasks[4].GRPC.Host != "grpc-server" {
+		t.Errorf("GRPC: Expected host 'grpc-server', got '%s'", tasks[4].GRPC.Host)
+	}
+	if tasks[4].GRPC.Port != "9000" {
+		t.Errorf("GRPC: Expected port '9000', got '%s'", tasks[4].GRPC.Port)
+	}
+	if tasks[4].GRPC.Headers["token"] != "abc123" {
+		t.Errorf("GRPC: Expected token=abc123, got %s", tasks[4].GRPC.Headers["token"])
+	}
+	if tasks[4].GRPC.Body != `{"txid":"001"}` {
+		t.Errorf("GRPC: Expected body, got '%s'", tasks[4].GRPC.Body)
+	}
+
+	// @ask
+	if tasks[5].Type != "ask" {
+		t.Errorf("Expected ask type, got %s", tasks[5].Type)
+	}
+
+	// @wait
+	if tasks[6].Type != "wait" {
+		t.Errorf("Expected wait type, got %s", tasks[6].Type)
+	}
+
+	// @check
+	if tasks[7].Type != "check" {
+		t.Errorf("Expected check type, got %s", tasks[7].Type)
+	}
+}
+
+func TestParseGRPCTarget(t *testing.T) {
+	tests := []struct {
+		input       string
+		expectHost  string
+		expectPort  string
+		expectMethod string
+	}{
+		{"localhost:50051/api.Service/Deploy", "localhost", "50051", "api.Service/Deploy"},
+		{"10.0.0.1:9000/tx.Commit", "10.0.0.1", "9000", "tx.Commit"},
+		{"my-server:8080/v1/Create", "my-server", "8080", "v1/Create"},
+		{"noservice", "noservice", "", ""},
+		{"host:port/method/path", "host", "port", "method/path"},
+	}
+
+	for _, tc := range tests {
+		host, port, method := parseGRPCTarget(tc.input)
+		if host != tc.expectHost {
+			t.Errorf("parseGRPCTarget(%q): expected host=%q, got %q", tc.input, tc.expectHost, host)
+		}
+		if port != tc.expectPort {
+			t.Errorf("parseGRPCTarget(%q): expected port=%q, got %q", tc.input, tc.expectPort, port)
+		}
+		if method != tc.expectMethod {
+			t.Errorf("parseGRPCTarget(%q): expected method=%q, got %q", tc.input, tc.expectMethod, method)
+		}
+	}
+}
+
+func TestParseHeadersAndBody(t *testing.T) {
+	// URL only
+	headers, body, target := parseHeadersAndBody("http://example.com/api")
+	if target != "http://example.com/api" {
+		t.Errorf("Expected target 'http://example.com/api', got '%s'", target)
+	}
+	if len(headers) != 0 {
+		t.Errorf("Expected 0 headers, got %d", len(headers))
+	}
+	if body != "" {
+		t.Errorf("Expected empty body, got '%s'", body)
+	}
+
+	// URL + header
+	headers, body, target = parseHeadersAndBody("http://example.com/api header:Auth=token123")
+	if target != "http://example.com/api" {
+		t.Errorf("Expected target 'http://example.com/api', got '%s'", target)
+	}
+	if headers["Auth"] != "token123" {
+		t.Errorf("Expected Auth=token123, got %s", headers["Auth"])
+	}
+
+	// URL + body
+	headers, body, target = parseHeadersAndBody(`http://example.com/api body:{"key":"val"}`)
+	if target != "http://example.com/api" {
+		t.Errorf("Expected target 'http://example.com/api', got '%s'", target)
+	}
+	if body != `{"key":"val"}` {
+		t.Errorf("Expected body, got '%s'", body)
+	}
+
+	// URL + multiple headers + body
+	headers, body, target = parseHeadersAndBody(`http://example.com/api header:Content-Type=application/json header:Auth=Bearer_tok body:{"name":"test"}`)
+	if target != "http://example.com/api" {
+		t.Errorf("Expected target 'http://example.com/api', got '%s'", target)
+	}
+	if len(headers) != 2 {
+		t.Errorf("Expected 2 headers, got %d", len(headers))
+	}
+	if headers["Content-Type"] != "application/json" {
+		t.Errorf("Expected Content-Type=application/json, got %s", headers["Content-Type"])
+	}
+	if headers["Auth"] != "Bearer_tok" {
+		t.Errorf("Expected Auth=Bearer_tok, got %s", headers["Auth"])
+	}
+	if body != `{"name":"test"}` {
+		t.Errorf("Expected body, got '%s'", body)
+	}
+}
+
 func TestDefaultGenAILibraryPath(t *testing.T) {
 	path := DefaultGenAILibraryPath()
 	if path == "" {

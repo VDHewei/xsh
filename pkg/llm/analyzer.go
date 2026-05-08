@@ -98,11 +98,17 @@ func (a *TaskAnalyzer) mockAnalyze(content string) []*types.Task {
 func buildAnalyzePrompt(content string) string {
 	return fmt.Sprintf(`Analyze the following deployment/migration content and extract tasks.
 Output ONLY the task list, one task per line, using this format:
-[GET] <url> for GET requests
-[POST] <url> for POST requests
+[GET] <url> header:Key=Value for GET requests with optional headers
+[POST] <url> header:Key=Value body:{"key":"val"} for POST requests with optional headers and body
+[PUT] <url> header:Key=Value body:{"key":"val"} for PUT requests with optional headers and body
+[DELETE] <url> header:Key=Value for DELETE requests with optional headers
+[GRPC] <host:port/Method> header:Key=Value body:{"key":"val"} for gRPC calls with optional headers and body
 @ask: <description> for user confirmations
 @wait: <duration> for waiting periods (e.g. @wait: 10min)
 @check: <description> for verification steps
+
+Headers can be repeated: header:Content-Type=application/json header:Authorization=Bearer token123
+Body is JSON and must be prefixed with body:
 
 Content:
 %s`, content)
@@ -124,15 +130,36 @@ func parseLLMResult(result string) []*types.Task {
 
 		if match := httpPattern.FindStringSubmatch(line); match != nil {
 			method := strings.ToUpper(match[1])
-			url := strings.TrimSpace(match[2])
-			tasks = append(tasks, &types.Task{
-				Type: types.TaskTypeHTTP,
-				Raw:  line,
-				HTTP: &types.HTTPTask{
-					Method: types.HTTPMethod(method),
-					URL:    url,
-				},
-			})
+			rest := strings.TrimSpace(match[2])
+
+			headers, body, target := parseHeadersAndBody(rest)
+
+			switch method {
+			case "GRPC":
+				host, port, grpcMethod := parseGRPCTarget(target)
+				tasks = append(tasks, &types.Task{
+					Type: types.TaskTypeGRPC,
+					Raw:  line,
+					GRPC: &types.GRPCTask{
+						Host:    host,
+						Port:    port,
+						Method:  grpcMethod,
+						Headers: headers,
+						Body:    body,
+					},
+				})
+			default:
+				tasks = append(tasks, &types.Task{
+					Type: types.TaskTypeHTTP,
+					Raw:  line,
+					HTTP: &types.HTTPTask{
+						Method:  types.HTTPMethod(method),
+						URL:     target,
+						Headers: headers,
+						Body:    body,
+					},
+				})
+			}
 			continue
 		}
 
@@ -163,6 +190,57 @@ func parseLLMResult(result string) []*types.Task {
 	}
 
 	return tasks
+}
+
+// parseHeadersAndBody 从行剩余部分提取 headers 和 body，返回 headers, body, target(URL或gRPC地址)
+func parseHeadersAndBody(rest string) (headers map[string]string, body string, target string) {
+	headers = make(map[string]string)
+
+	// 找到第一个 header: 或 body: 的位置来切割 target
+	headerIdx := strings.Index(rest, " header:")
+	bodyIdx := strings.Index(rest, " body:")
+
+	cutIdx := len(rest)
+	if headerIdx >= 0 && headerIdx < cutIdx {
+		cutIdx = headerIdx
+	}
+	if bodyIdx >= 0 && bodyIdx < cutIdx {
+		cutIdx = bodyIdx
+	}
+
+	target = strings.TrimSpace(rest[:cutIdx])
+	suffix := rest[cutIdx:]
+
+	// 解析 header:Key=Value
+	headerRe := regexp.MustCompile(`header:(\S+?)=(\S+)`)
+	for _, m := range headerRe.FindAllStringSubmatch(suffix, -1) {
+		headers[m[1]] = m[2]
+	}
+
+	// 解析 body:{...}
+	bodyRe := regexp.MustCompile(`body:(\{[^}]*\})`)
+	if m := bodyRe.FindStringSubmatch(suffix); m != nil {
+		body = m[1]
+	}
+
+	return headers, body, target
+}
+
+// parseGRPCTarget 解析 gRPC 目标地址 host:port/Method
+func parseGRPCTarget(target string) (host, port, method string) {
+	// 格式: host:port/Service/Method
+	slashIdx := strings.Index(target, "/")
+	if slashIdx < 0 {
+		return target, "", ""
+	}
+	addr := target[:slashIdx]
+	method = target[slashIdx+1:]
+
+	colonIdx := strings.LastIndex(addr, ":")
+	if colonIdx < 0 {
+		return addr, "", method
+	}
+	return addr[:colonIdx], addr[colonIdx+1:], method
 }
 
 // extractURLs 提取 URLs
