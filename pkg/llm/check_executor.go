@@ -68,12 +68,13 @@ func parseCheckResult(response string) (passed bool, reason string) {
 	lines := strings.Split(response, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "VERDICT:") {
-			verdict := strings.TrimSpace(strings.TrimPrefix(line, "VERDICT:"))
+		upperLine := strings.ToUpper(line)
+		if strings.HasPrefix(upperLine, "VERDICT:") {
+			verdict := strings.TrimSpace(line[len("VERDICT:"):])
 			passed = strings.EqualFold(verdict, "PASS")
 		}
-		if strings.HasPrefix(line, "REASON:") {
-			reason = strings.TrimSpace(strings.TrimPrefix(line, "REASON:"))
+		if strings.HasPrefix(upperLine, "REASON:") {
+			reason = strings.TrimSpace(line[len("REASON:"):])
 		}
 	}
 	if reason == "" {

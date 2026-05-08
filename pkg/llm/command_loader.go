@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -74,14 +73,21 @@ func (l *CommandLoaderImpl) ParseCommand(content, name, filePath string) (*types
 		return cmd, fmt.Errorf("no ## 任务 section found in %s", filePath)
 	}
 
-	// 尝试用 LLM analyzer 解析
-	tasks, err := l.analyzer.AnalyzeContent(taskContent)
-	if err != nil || len(tasks) == 0 {
-		// LLM 失败或无模型, 降级为 regex 解析
-		tasks, err = parseTaskLines(taskContent)
-		if err != nil {
-			return cmd, fmt.Errorf("parse command tasks: %w", err)
+	// 尝试用 LLM analyzer 解析, 无模型时直接用 regex
+	var tasks []*types.Task
+	var err error
+	if l.analyzer.model != nil && l.analyzer.model.IsLoaded() {
+		tasks, err = l.analyzer.AnalyzeContent(taskContent)
+		// LLM 失败时降级
+		if err != nil || len(tasks) == 0 {
+			tasks, err = parseTaskLines(taskContent)
 		}
+	} else {
+		// 无 LLM 模型时直接用 regex 解析（命令文件中的任务已有明确结构）
+		tasks, err = parseTaskLines(taskContent)
+	}
+	if err != nil {
+		return cmd, fmt.Errorf("parse command tasks: %w", err)
 	}
 
 	cmd.Tasks = tasks
@@ -90,22 +96,36 @@ func (l *CommandLoaderImpl) ParseCommand(content, name, filePath string) (*types
 
 // extractDescription 从 markdown 中提取 ## 描述 区块
 func extractDescription(content string) string {
-	re := regexp.MustCompile(`(?m)^##\s*描述\s*\n([\s\S]*?)(?=\n##|$)`)
-	matches := re.FindStringSubmatch(content)
-	if len(matches) < 2 {
-		return ""
-	}
-	return strings.TrimSpace(matches[1])
+	return extractSection(content, "描述")
 }
 
 // extractTaskSection 从 markdown 中提取 ## 任务 区块
 func extractTaskSection(content string) string {
-	re := regexp.MustCompile(`(?m)^##\s*任务\s*\n([\s\S]*?)(?=\n##|\n#|$)`)
-	matches := re.FindStringSubmatch(content)
-	if len(matches) < 2 {
-		return ""
+	return extractSection(content, "任务")
+}
+
+// extractSection 从 markdown 中提取指定的 ## 区块 (通用实现, 避免 Go regex 不支持 lookahead)
+func extractSection(content, keyword string) string {
+	lines := strings.Split(content, "\n")
+	var result []string
+	inSection := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") && strings.Contains(trimmed, keyword) {
+			inSection = true
+			continue
+		}
+		if inSection {
+			// 遇到下一个标题行则结束
+			if strings.HasPrefix(trimmed, "#") {
+				break
+			}
+			result = append(result, line)
+		}
 	}
-	return strings.TrimSpace(matches[1])
+
+	return strings.TrimSpace(strings.Join(result, "\n"))
 }
 
 // parseTaskLines 使用 regex 解析任务行 (LLM 降级方案)

@@ -755,7 +755,7 @@ func TestDeepSeekR1ProdMigrationAnalysis(t *testing.T) {
 
 	// Also test direct inference with migration content as prompt
 	cfg := NewConfig()
-	cfg.MaxLength = 512
+	cfg.MaxLength = 2048
 	cfg.Temperature = 0.6
 
 	prompt := buildAnalyzePrompt(string(content))

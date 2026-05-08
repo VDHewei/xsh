@@ -64,8 +64,9 @@ func extractSuggestion(response string) string {
 	lines := strings.Split(response, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "SUGGESTION:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "SUGGESTION:"))
+		upperLine := strings.ToUpper(line)
+		if strings.HasPrefix(upperLine, "SUGGESTION:") {
+			return strings.TrimSpace(line[len("SUGGESTION:"):])
 		}
 	}
 	// fallback: 返回最后一行非空内容
