@@ -64,15 +64,26 @@ go build -o xsh ./cmd/xsh
 
 ### 模型管理
 
+xsh 支持候选模型，可按需下载：
+
+| 模型 | 短名称 | 默认 | 状态 |
+|------|--------|------|------|
+| DeepSeek R1 Distill Qwen | `deepseek` | 是 | 已安装 |
+| GLM 5.1 Distill | `glm5.1` | 否 | 候选 |
+
 ```bash
 # 在 HuggingFace 搜索模型
 ./xsh model search onnx
 
-# 列出本地模型
+# 列出本地模型（显示 [candidate]、[not installed] 标记）
 ./xsh model list
 
-# 选择模型
-./xsh model select deepseek-r1-distill
+# 选择模型（支持短名称）
+./xsh model select deepseek
+./xsh model select glm5.1
+
+# 下载候选模型
+./xsh model download glm5.1
 ```
 
 ### 测试模式
@@ -89,18 +100,24 @@ go build -o xsh ./cmd/xsh
 
 使用真实 LLM 推理需要：
 
-1. **GenAI 动态库** - 首次使用时自动下载到 `lib/` 目录：
+1. **GenAI 动态库** - 首次使用时自动下载到 `lib/` 目录，后续使用缓存：
    - `onnxruntime-genai.dll` (Windows) / `.so` (Linux) / `.dylib` (macOS)
    - `onnxruntime.dll` (Windows) / `.so` (Linux) / `.dylib` (macOS)
 
 2. **ONNX 模型目录** - 从 HuggingFace 下载，例如：
    ```
-   models/deepseek-r1-distill-qwen-1.5B/
+   models/yasserrmd_deepseek-r1-distill-qwen-onnx/
    ├── genai_config.json
    ├── model.onnx
    ├── model.onnx.data
    ├── tokenizer.json
    └── tokenizer_config.json
+   ```
+
+   使用短名称配合 `model download` 自动解析到正确的仓库：
+   ```bash
+   ./xsh model download deepseek    # → yasserrmd/deepseek-r1-distill-qwen-onnx
+   ./xsh model download glm5.1      # → yasserrmd/glm5.1-distill-onnx
    ```
 
 ## 任务文件格式

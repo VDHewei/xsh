@@ -104,31 +104,48 @@ progress_title = "Progress"
 
 ### Model Management
 
+xsh supports candidate models that can be downloaded on demand:
+
+| Model | Short Name | Default | Status |
+|-------|-----------|---------|--------|
+| DeepSeek R1 Distill Qwen | `deepseek` | Yes | Installed |
+| GLM 5.1 Distill | `glm5.1` | No | Candidate |
+
 ```bash
 # Search models on HuggingFace
 ./xsh model search onnx
 
-# List local models
+# List local models (shows [candidate], [not installed] markers)
 ./xsh model list
 
-# Select a model
-./xsh model select deepseek-r1-distill
+# Select a model (use short name for candidates)
+./xsh model select deepseek
+./xsh model select glm5.1
+
+# Download a candidate model
+./xsh model download glm5.1
 ```
 
 ### Prerequisites for LLM Inference
 
-1. **GenAI shared libraries** - Auto-downloaded to `lib/` on first use:
+1. **GenAI shared libraries** - Auto-downloaded to `lib/` on first use and cached for subsequent runs:
    - `onnxruntime-genai.dll` (Windows) / `.so` (Linux) / `.dylib` (macOS)
    - `onnxruntime.dll` (Windows) / `.so` (Linux) / `.dylib` (macOS)
 
 2. **ONNX model directory** - Download from HuggingFace, e.g.:
    ```
-   models/deepseek-r1-distill-qwen-1.5B/
+   models/yasserrmd_deepseek-r1-distill-qwen-onnx/
    ├── genai_config.json
    ├── model.onnx
    ├── model.onnx.data
    ├── tokenizer.json
    └── tokenizer_config.json
+   ```
+
+   Use short names with `model download` to auto-resolve to the correct repo:
+   ```bash
+   ./xsh model download deepseek    # → yasserrmd/deepseek-r1-distill-qwen-onnx
+   ./xsh model download glm5.1      # → yasserrmd/glm5.1-distill-onnx
    ```
 
 ## Task File Format

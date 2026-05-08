@@ -876,3 +876,171 @@ func TestUntargzNonexistent(t *testing.T) {
 		t.Error("untargz should fail for nonexistent file")
 	}
 }
+
+// --- T1 Entry Layer 新增测试 ---
+
+func TestGetModelPath_CandidateShortName(t *testing.T) {
+	// 创建临时 models 目录
+	tmpDir := t.TempDir()
+	modelsDir := filepath.Join(tmpDir, "models")
+	candidateDir := filepath.Join(modelsDir, "yasserrmd_deepseek-r1-distill-qwen-onnx")
+	if err := os.MkdirAll(candidateDir, 0755); err != nil {
+		t.Fatalf("Failed to create candidate dir: %v", err)
+	}
+	// 创建模型标记文件
+	if err := os.WriteFile(filepath.Join(candidateDir, "genai_config.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("Failed to create config file: %v", err)
+	}
+
+	// 测试通过短名 deepseek 查找
+	path := GetModelPath(modelsDir, "deepseek")
+	expected := candidateDir
+	if path != expected {
+		t.Errorf("GetModelPath(models, 'deepseek') = %s, want %s", path, expected)
+	}
+}
+
+func TestGetModelPath_DirectPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelsDir := filepath.Join(tmpDir, "models")
+	directDir := filepath.Join(modelsDir, "my-custom-model")
+	if err := os.MkdirAll(directDir, 0755); err != nil {
+		t.Fatalf("Failed to create dir: %v", err)
+	}
+
+	path := GetModelPath(modelsDir, "my-custom-model")
+	if path != directDir {
+		t.Errorf("GetModelPath should return direct path for non-candidate model")
+	}
+}
+
+func TestListModelsWithCandidates_Installed(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelsDir := filepath.Join(tmpDir, "models")
+	candidateDir := filepath.Join(modelsDir, "yasserrmd_deepseek-r1-distill-qwen-onnx")
+	if err := os.MkdirAll(candidateDir, 0755); err != nil {
+		t.Fatalf("Failed to create candidate dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(candidateDir, "genai_config.json"), []byte("{}"), 0644); err != nil {
+		t.Fatalf("Failed to create config file: %v", err)
+	}
+
+	models, err := ListModelsWithCandidates(modelsDir)
+	if err != nil {
+		t.Fatalf("ListModelsWithCandidates error: %v", err)
+	}
+	if len(models) == 0 {
+		t.Fatal("Expected at least 1 model (deepseek candidate)")
+	}
+
+	foundDeepseek := false
+	foundGlm51 := false
+	for _, m := range models {
+		t.Logf("Model: name=%s installed=%v candidate=%v", m.Name, m.Installed, m.Candidate != nil)
+		if m.Name == "deepseek" {
+			foundDeepseek = true
+			if !m.Installed {
+				t.Error("deepseek should be marked as installed")
+			}
+			if m.Candidate == nil || m.Candidate.Name != "deepseek" {
+				t.Error("deepseek should have Candidate info")
+			}
+		}
+		if m.Name == "glm5.1" && !m.Installed {
+			foundGlm51 = true
+		}
+	}
+	if !foundDeepseek {
+		t.Error("Expected to find deepseek in the model list")
+	}
+	if !foundGlm51 {
+		t.Error("Expected to find glm5.1 as not installed candidate")
+	}
+}
+
+func TestListModelsWithCandidates_NotInstalled(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelsDir := filepath.Join(tmpDir, "models")
+	// 空的 models 目录
+	if err := os.MkdirAll(modelsDir, 0755); err != nil {
+		t.Fatalf("Failed to create models dir: %v", err)
+	}
+
+	models, err := ListModelsWithCandidates(modelsDir)
+	if err != nil {
+		t.Fatalf("ListModelsWithCandidates error: %v", err)
+	}
+
+	// 即使没有本地模型，也应该列出未安装的候选模型
+	if len(models) == 0 {
+		t.Fatal("Expected at least 1 candidate model even when none installed")
+	}
+
+	for _, m := range models {
+		if m.Installed {
+			t.Errorf("Model %s should be marked as not installed", m.Name)
+		}
+		if m.Candidate == nil {
+			t.Errorf("Model %s should have Candidate info", m.Name)
+		}
+		t.Logf("Not installed candidate: %s (%s)", m.Name, m.Candidate.RepoID)
+	}
+}
+
+func TestDownloadLibraryCache(t *testing.T) {
+	// 确保 lib 目录不存在干扰文件
+	libPath := DefaultGenAILibraryPath()
+	ortPath := DefaultOnnxRuntimeLibraryPath()
+
+	// 如果是实际存在的库（已下载），测试缓存行为
+	genaiExists := false
+	ortExists := false
+	if _, err := os.Stat(libPath); err == nil {
+		genaiExists = true
+	}
+	if _, err := os.Stat(ortPath); err == nil {
+		ortExists = true
+	}
+
+	if genaiExists && ortExists {
+		// 验证 DownloadOnnxRuntimeGenAILibrary 跳过下载
+		err := DownloadOnnxRuntimeGenAILibrary()
+		if err != nil {
+			t.Errorf("DownloadOnnxRuntimeGenAILibrary should succeed when libs cached: %v", err)
+		}
+		t.Log("Cache check: libraries exist, download skipped")
+	} else {
+		t.Skip("Dynamic libraries not found locally, skipping cache test")
+	}
+}
+
+func TestResolveCandidateName(t *testing.T) {
+	if id := ResolveCandidateName("deepseek"); id != "yasserrmd/deepseek-r1-distill-qwen-onnx" {
+		t.Errorf("ResolveCandidateName(deepseek) = %s, want yasserrmd/deepseek-r1-distill-qwen-onnx", id)
+	}
+	if id := ResolveCandidateName("glm5.1"); id != "yasserrmd/glm5.1-distill-onnx" {
+		t.Errorf("ResolveCandidateName(glm5.1) = %s, want yasserrmd/glm5.1-distill-onnx", id)
+	}
+	if id := ResolveCandidateName("unknown"); id != "" {
+		t.Errorf("ResolveCandidateName(unknown) = %s, want empty string", id)
+	}
+}
+
+func TestDefaultCandidateModels(t *testing.T) {
+	models := DefaultCandidateModels()
+	if len(models) < 2 {
+		t.Fatalf("Expected at least 2 candidate models, got %d", len(models))
+	}
+
+	foundDefault := false
+	for _, m := range models {
+		if m.Default {
+			foundDefault = true
+			t.Logf("Default model: %s (%s)", m.Name, m.RepoID)
+			break
+		}
+	}
+	if !foundDefault {
+		t.Error("Expected at least one default candidate model")
+	}
+}

@@ -92,8 +92,10 @@ func runTestMode() {
 
 	fmt.Printf("输入: %s\n\n", testFile)
 
-	// 确保动态库存在
-	_ = llm.DownloadOnnxRuntimeGenAILibrary()
+	// 确保动态库存在 (已缓存, 不会重复下载)
+	if err := llm.EnsureGenAILibrary(); err != nil {
+		fmt.Fprintf(os.Stderr, "Dynamic library error: %v\n", err)
+	}
 
 	var results []modelTestResult
 

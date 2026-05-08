@@ -245,8 +245,10 @@ func DownloadWithMirror(repoID, mirror string) (*DownloadedModel, error) {
 // 否则直接返回原值（视为用户直接提供的完整 RepoID）
 func resolveModelRepo(candidate string) string {
 	candidates := DefaultCandidateModels()
-	if repoID, ok := candidates[candidate]; ok {
-		return repoID
+	for _, c := range candidates {
+		if c.Name == candidate {
+			return c.RepoID
+		}
 	}
 	return candidate
 }

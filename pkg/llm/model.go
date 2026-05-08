@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	ortgenai "github.com/getcharzp/onnxruntime-genai_purego"
+
+	"github.com/VDHewei/xsh/internal/types"
 )
 
 // Model LLM 模型
@@ -101,8 +103,8 @@ func DefaultOnnxRuntimeLibraryPath() string {
 	}
 }
 
-// ensureGenAILibrary 确保 GenAI 动态库存在
-func ensureGenAILibrary() error {
+// EnsureGenAILibrary 确保 GenAI 动态库存在 (导出给外部调用)
+func EnsureGenAILibrary() error {
 	libPath := DefaultGenAILibraryPath()
 	if _, err := os.Stat(libPath); err == nil {
 		return nil
@@ -112,18 +114,35 @@ func ensureGenAILibrary() error {
 
 // DownloadOnnxRuntimeGenAILibrary 下载 onnxruntime-genai 和 onnxruntime 动态库到 lib/ 目录
 func DownloadOnnxRuntimeGenAILibrary() error {
+	// 检查两个库是否都已存在, 避免重复下载
+	genaiExists := false
+	ortExists := false
+	if _, err := os.Stat(DefaultGenAILibraryPath()); err == nil {
+		genaiExists = true
+	}
+	if _, err := os.Stat(DefaultOnnxRuntimeLibraryPath()); err == nil {
+		ortExists = true
+	}
+	if genaiExists && ortExists {
+		return nil
+	}
+
 	if err := os.MkdirAll("lib", 0755); err != nil {
 		return fmt.Errorf("failed to create lib directory: %w", err)
 	}
 
 	// 下载 onnxruntime-genai
-	if err := downloadGenAILib(); err != nil {
-		return fmt.Errorf("failed to download onnxruntime-genai: %w", err)
+	if !genaiExists {
+		if err := downloadGenAILib(); err != nil {
+			return fmt.Errorf("failed to download onnxruntime-genai: %w", err)
+		}
 	}
 
 	// 下载 onnxruntime (GenAI 依赖)
-	if err := downloadOnnxRuntimeLib(); err != nil {
-		return fmt.Errorf("failed to download onnxruntime: %w", err)
+	if !ortExists {
+		if err := downloadOnnxRuntimeLib(); err != nil {
+			return fmt.Errorf("failed to download onnxruntime: %w", err)
+		}
 	}
 
 	return nil
@@ -278,7 +297,7 @@ func copyLibsFromDir(srcDir, destDir string) error {
 // Load 加载模型 (modelDir 是包含 genai_config.json 等文件的模型目录)
 func (m *Model) Load(modelDir string) error {
 	// 确保 GenAI 动态库存在
-	if err := ensureGenAILibrary(); err != nil {
+	if err := EnsureGenAILibrary(); err != nil {
 		return fmt.Errorf("failed to ensure genai library: %w", err)
 	}
 
@@ -582,9 +601,34 @@ func GenerateStream(modelDir, prompt string, opts GenerateOptions, onToken func(
 	return engine.GenerateStream(modelDir, prompt, opts, onToken)
 }
 
-// GetModelPath 获取模型路径
+// GetModelPath 获取模型路径 (支持候选名匹配)
+// 先尝试直接路径 modelDir/name，不存在时通过候选名映射查找目录
 func GetModelPath(modelDir string, modelName string) string {
-	return filepath.Join(modelDir, modelName)
+	directPath := filepath.Join(modelDir, modelName)
+	if info, err := os.Stat(directPath); err == nil && info.IsDir() {
+		return directPath
+	}
+
+	// 非直接目录名时, 尝试候选名匹配
+	repoID := ResolveCandidateName(modelName)
+	if repoID != "" {
+		// 候选名映射到 RepoID, 查找 RepoID 对应的下载目录
+		// RepoID: "yasserrmd/glm5.1-distill-onnx" → 下载目录: "yasserrmd_glm5.1-distill-onnx"
+		candidateDir := strings.ReplaceAll(repoID, "/", "_")
+		candidatePath := filepath.Join(modelDir, candidateDir)
+		if info, err := os.Stat(candidatePath); err == nil && info.IsDir() {
+			return candidatePath
+		}
+	}
+
+	return directPath
+}
+
+// ModelInfo 模型信息 (含候选状态)
+type ModelInfo struct {
+	Name      string               // 目录名或候选短名
+	Installed bool                 // 是否已下载到本地
+	Candidate *types.ModelCandidate // 非 nil 表示是候选模型
 }
 
 // ListModels 列出可用模型
@@ -615,12 +659,77 @@ func ListModels(modelDir string) ([]string, error) {
 	return models, nil
 }
 
-// DefaultCandidateModels 返回默认候选模型列表（短名称 -> HuggingFace RepoID）
-func DefaultCandidateModels() map[string]string {
-	return map[string]string{
-		"deepseek": "yasserrmd/deepseek-r1-distill-qwen-onnx",
-		"glm5.1":   "yasserrmd/glm5.1-distill-onnx",
+// ListModelsWithCandidates 列出模型及其候选状态
+// 合并本地已安装模型和候选模型列表, 标记 Installed/Candidate 状态
+func ListModelsWithCandidates(modelDir string) ([]ModelInfo, error) {
+	var result []ModelInfo
+	seen := make(map[string]bool)
+
+	// 扫描本地已安装模型
+	installed, err := ListModels(modelDir)
+	if err != nil {
+		return nil, err
 	}
+
+	// 构建候选模型 RepoID → 目录名映射
+	candidates := DefaultCandidateModels()
+	candidateByDir := make(map[string]*types.ModelCandidate)
+	for i := range candidates {
+		dirName := strings.ReplaceAll(candidates[i].RepoID, "/", "_")
+		candidateByDir[dirName] = &candidates[i]
+		// 也按短名映射
+		candidateByDir[candidates[i].Name] = &candidates[i]
+	}
+
+	// 先添加本地已安装模型
+	for _, name := range installed {
+		displayName := name
+		c, hasCandidate := candidateByDir[name]
+		if hasCandidate {
+			// 匹配到候选模型, 使用短名作为显示名
+			displayName = c.Name
+		}
+		info := ModelInfo{Name: displayName, Installed: true}
+		if hasCandidate {
+			info.Candidate = c
+		}
+		result = append(result, info)
+		seen[name] = true
+		seen[c.Name] = true // 标记候选短名已处理
+	}
+
+	// 添加未安装的候选模型
+	for _, c := range candidates {
+		// 按短名标记
+		if !seen[c.Name] {
+			dirName := strings.ReplaceAll(c.RepoID, "/", "_")
+			if !seen[dirName] {
+				info := ModelInfo{Name: c.Name, Installed: false, Candidate: &c}
+				result = append(result, info)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// DefaultCandidateModels 返回默认候选模型列表
+func DefaultCandidateModels() []types.ModelCandidate {
+	return []types.ModelCandidate{
+		{RepoID: "yasserrmd/deepseek-r1-distill-qwen-onnx", Name: "deepseek", Default: true},
+		{RepoID: "yasserrmd/glm5.1-distill-onnx", Name: "glm5.1", Default: false},
+	}
+}
+
+// ResolveCandidateName 将候选模型短名解析为 RepoID, 未匹配返回空串
+func ResolveCandidateName(name string) string {
+	candidates := DefaultCandidateModels()
+	for _, c := range candidates {
+		if c.Name == name {
+			return c.RepoID
+		}
+	}
+	return ""
 }
 
 // MockInfer 模拟推理（用于测试，无模型时的后备方案）

@@ -31,7 +31,7 @@ func ModelSearch(query string) {
 
 // ModelList 列出本地模型
 func ModelList(modelDir string) {
-	models, err := ListModels(modelDir)
+	models, err := ListModelsWithCandidates(modelDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "List error: %v\n", err)
 		os.Exit(1)
@@ -44,7 +44,18 @@ func ModelList(modelDir string) {
 
 	fmt.Println("Available models:")
 	for _, model := range models {
-		fmt.Printf("  - %s\n", model)
+		marker := ""
+		if model.Candidate != nil {
+			if model.Installed {
+				marker = " [candidate]"
+			} else {
+				marker = " [not installed]"
+			}
+			if model.Candidate.Default {
+				marker = " [candidate, default]"
+			}
+		}
+		fmt.Printf("  - %s%s\n", model.Name, marker)
 	}
 }
 
@@ -152,7 +163,7 @@ func handleModelList(args []string) error {
 			}
 		}
 	}
-	models, err := ListModels(modelDir)
+	models, err := ListModelsWithCandidates(modelDir)
 	if err != nil {
 		return fmt.Errorf("list error: %w", err)
 	}
@@ -164,7 +175,18 @@ func handleModelList(args []string) error {
 
 	fmt.Println("Available models:")
 	for _, model := range models {
-		fmt.Printf("  - %s\n", model)
+		marker := ""
+		if model.Candidate != nil {
+			if model.Installed {
+				marker = " [candidate]"
+			} else {
+				marker = " [not installed]"
+			}
+			if model.Candidate.Default {
+				marker = " [candidate, default]"
+			}
+		}
+		fmt.Printf("  - %s%s\n", model.Name, marker)
 	}
 	return nil
 }
@@ -188,6 +210,10 @@ func handleModelSelect(args []string) error {
 	modelPath := GetModelPath(modelDir, modelName)
 
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
+		repoID := ResolveCandidateName(modelName)
+		if repoID != "" {
+			return fmt.Errorf("model '%s' (%s) not installed. Run: xsh model download %s", modelName, repoID, modelName)
+		}
 		return fmt.Errorf("model not found: %s", modelPath)
 	}
 

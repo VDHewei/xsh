@@ -109,6 +109,13 @@ type CustomCommand struct {
 
 // CommandLoader 命令加载器接口
 type CommandLoader interface {
-	Scan() ([]string, error)             // 扫描 commands/ 目录, 返回命令名称列表
+	Scan() ([]string, error)                // 扫描 commands/ 目录, 返回命令名称列表
 	Load(name string) (*CustomCommand, error) // 加载命令文件并解析
+}
+
+// ModelCandidate 候选模型配置
+type ModelCandidate struct {
+	RepoID  string // HuggingFace 仓库 ID (如 yasserrmd/glm5.1-distill-onnx)
+	Name    string // 短名称 (如 deepseek, glm5.1)
+	Default bool   // 是否为默认模型
 }
