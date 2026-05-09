@@ -505,9 +505,9 @@ func TestParseMixedTasksWithHeadersAndBody(t *testing.T) {
 
 func TestParseGRPCTarget(t *testing.T) {
 	tests := []struct {
-		input       string
-		expectHost  string
-		expectPort  string
+		input        string
+		expectHost   string
+		expectPort   string
 		expectMethod string
 	}{
 		{"localhost:50051/api.Service/Deploy", "localhost", "50051", "api.Service/Deploy"},
@@ -812,8 +812,8 @@ func TestUntargz(t *testing.T) {
 
 	// Extract
 	extractDir := filepath.Join(tmpDir, "extracted")
-	if err := untargz(archivePath, extractDir); err != nil {
-		t.Fatalf("untargz failed: %v", err)
+	if err := UnTarGz(archivePath, extractDir); err != nil {
+		t.Fatalf("UnTarGz failed: %v", err)
 	}
 
 	// Verify
@@ -858,8 +858,8 @@ func TestUntargzWithTgz(t *testing.T) {
 
 	// Extract
 	extractDir := filepath.Join(tmpDir, "extracted")
-	if err := untargz(archivePath, extractDir); err != nil {
-		t.Fatalf("untargz failed for .tgz: %v", err)
+	if err := UnTarGz(archivePath, extractDir); err != nil {
+		t.Fatalf("UnTarGz failed for .tgz: %v", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(extractDir, "readme.txt"))
@@ -872,8 +872,8 @@ func TestUntargzWithTgz(t *testing.T) {
 }
 
 func TestUntargzNonexistent(t *testing.T) {
-	if err := untargz("/nonexistent/archive.tar.gz", t.TempDir()); err == nil {
-		t.Error("untargz should fail for nonexistent file")
+	if err := UnTarGz("/nonexistent/archive.tar.gz", t.TempDir()); err == nil {
+		t.Error("UnTarGz should fail for nonexistent file")
 	}
 }
 

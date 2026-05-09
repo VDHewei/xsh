@@ -19,18 +19,18 @@ import (
 
 // Model LLM 模型
 type Model struct {
-	Name       string
-	Path       string
-	engine     *ortgenai.Engine
-	model      *ortgenai.Model
-	isLoaded   bool
-	libPath    string // onnxruntime-genai shared library path
+	Name     string
+	Path     string
+	engine   *ortgenai.Engine
+	model    *ortgenai.Model
+	isLoaded bool
+	libPath  string // onnxruntime-genai shared library path
 }
 
 // Config 模型配置
 type Config struct {
 	ModelPath     string
-	ModelType     string  // "llama", "qwen", "baichuan" 等
+	ModelType     string // "llama", "qwen", "baichuan" 等
 	MaxLength     int
 	Temperature   float32
 	TopP          float32
@@ -186,7 +186,7 @@ func downloadGenAILib() error {
 
 	fmt.Printf("Downloading onnxruntime-genai from %s\n", downloadURL)
 
-	return downloadAndExtractArchive(downloadURL, "lib", platform, ext)
+	return downloadAndExtractArchive(downloadURL, "lib", ext)
 }
 
 func downloadOnnxRuntimeLib() error {
@@ -227,10 +227,10 @@ func downloadOnnxRuntimeLib() error {
 
 	fmt.Printf("Downloading onnxruntime from %s\n", downloadURL)
 
-	return downloadAndExtractArchive(downloadURL, "lib", platform, ext)
+	return downloadAndExtractArchive(downloadURL, "lib", ext)
 }
 
-func downloadAndExtractArchive(downloadURL, destDir, platform, ext string) error {
+func downloadAndExtractArchive(downloadURL, destDir, ext string) error {
 	tmpDir, err := os.MkdirTemp("", "onnx-download")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
@@ -264,7 +264,7 @@ func downloadAndExtractArchive(downloadURL, destDir, platform, ext string) error
 			return fmt.Errorf("failed to unzip: %w", err)
 		}
 	} else {
-		if err := untargz(archivePath, tmpDir); err != nil {
+		if err := UnTarGz(archivePath, tmpDir); err != nil {
 			return fmt.Errorf("failed to extract tar.gz: %w", err)
 		}
 	}
@@ -626,8 +626,8 @@ func GetModelPath(modelDir string, modelName string) string {
 
 // ModelInfo 模型信息 (含候选状态)
 type ModelInfo struct {
-	Name      string               // 目录名或候选短名
-	Installed bool                 // 是否已下载到本地
+	Name      string                // 目录名或候选短名
+	Installed bool                  // 是否已下载到本地
 	Candidate *types.ModelCandidate // 非 nil 表示是候选模型
 }
 
@@ -761,27 +761,28 @@ func unzip(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer archive.Close()
-
+	var files = []io.Closer{
+		archive,
+	}
+	defer closerAll(files)
 	for _, file := range archive.File {
 		rc, err := file.Open()
 		if err != nil {
 			return err
 		}
-		defer rc.Close()
+		files = append(files, rc)
 
 		path := filepath.Join(dst, file.Name)
 		if file.FileInfo().IsDir() {
-			os.MkdirAll(path, 0755)
+			_ = os.MkdirAll(path, 0755)
 		} else {
-			os.MkdirAll(filepath.Dir(path), 0755)
+			_ = os.MkdirAll(filepath.Dir(path), 0755)
 			outFile, err := os.Create(path)
 			if err != nil {
 				return err
 			}
-			_, err = io.Copy(outFile, rc)
-			outFile.Close()
-			if err != nil {
+			files = append(files, outFile)
+			if _, err = io.Copy(outFile, rc); err != nil {
 				return err
 			}
 		}
@@ -789,7 +790,13 @@ func unzip(src, dst string) error {
 	return nil
 }
 
-func untargz(src, dst string) error {
+func closerAll(files []io.Closer) {
+	for _, fd := range files {
+		_ = fd.Close()
+	}
+}
+
+func UnTarGz(src, dst string) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("open archive: %w", err)
