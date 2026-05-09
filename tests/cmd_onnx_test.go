@@ -32,15 +32,6 @@ type StepResult struct {
 	Error  string `json:"error"`
 }
 
-// TestMockInfer 测试 Mock 推理
-func TestMockInfer(t *testing.T) {
-	result := llm.MockInfer("Hello")
-	if result == "" {
-		t.Error("MockInfer should return non-empty string")
-	}
-	t.Logf("MockInfer result: %s", result)
-}
-
 // TestMockAnalyze 测试 Mock 分析
 func TestMockAnalyze(t *testing.T) {
 	analyzer := llm.NewTaskAnalyzer()
@@ -63,21 +54,6 @@ func TestMockAnalyze(t *testing.T) {
 	for i, task := range tasks {
 		t.Logf("Task[%d]: type=%s raw=%s", i, task.Type, task.Raw)
 	}
-}
-
-// TestMockInferWithRealFile 测试使用测试文件进行 Mock 推理
-func TestMockInferWithRealFile(t *testing.T) {
-	testFile := "tests/data/prod-migration-form-uat.txt"
-	task, err := os.ReadFile(testFile)
-	if err != nil {
-		t.Skipf("Test file not found: %s, skipping", testFile)
-	}
-
-	result := llm.MockInfer(string(task))
-	if result == "" {
-		t.Error("MockInfer should return non-empty string for test file content")
-	}
-	t.Logf("Mock inference result (%d chars):\n%s", len(result), result)
 }
 
 // TestModelCreation 测试模型创建
@@ -116,18 +92,6 @@ func TestTaskAnalyzerWithFile(t *testing.T) {
 	for i, task := range tasks {
 		t.Logf("  [%d] %s: %s", i, task.Type, task.Raw)
 	}
-}
-
-// TestInferWithPrompt 测试全局推理函数
-func TestInferWithPrompt(t *testing.T) {
-	result, err := llm.InferWithPrompt("Test prompt")
-	if err != nil {
-		t.Fatalf("InferWithPrompt failed: %v", err)
-	}
-	if result == "" {
-		t.Error("InferWithPrompt should return non-empty string")
-	}
-	t.Logf("InferWithPrompt result: %s", result)
 }
 
 // TestListModels 测试列出模型

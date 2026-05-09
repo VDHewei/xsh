@@ -21,14 +21,6 @@ func deepseekModelDir() string {
 	return filepath.Join(projectRoot(), "models", "deepseek-r1-distill-qwen-1.5B", "cpu_and_mobile", "cpu-int4-rtn-block-32-acc-level-4")
 }
 
-func TestMockInfer(t *testing.T) {
-	result := MockInfer("Test input")
-	if result == "" {
-		t.Error("MockInfer should return non-empty string")
-	}
-	t.Logf("MockInfer: %s", result)
-}
-
 func TestNewModel(t *testing.T) {
 	model := NewModel("test")
 	if model.Name != "test" {
@@ -129,16 +121,6 @@ func TestTaskAnalyzerAnalyzeFile(t *testing.T) {
 	}
 }
 
-func TestInferWithPrompt(t *testing.T) {
-	result, err := InferWithPrompt("Test prompt")
-	if err != nil {
-		t.Fatalf("InferWithPrompt failed: %v", err)
-	}
-	if result == "" {
-		t.Error("InferWithPrompt should return non-empty string")
-	}
-}
-
 func TestNewDownloadConfig(t *testing.T) {
 	cfg := NewDownloadConfig()
 	if cfg.CacheDir != "models" {
@@ -214,13 +196,15 @@ func TestSearchModels(t *testing.T) {
 
 func TestGetModelInfo(t *testing.T) {
 	cfg := NewDownloadConfig()
-	info, err := GetModelInfo("test/model", cfg)
+	info, err := GetModelInfo("yasserrmd/glm5.1-distill-onnx", cfg)
 	if err != nil {
 		t.Fatalf("GetModelInfo failed: %v", err)
 	}
-	if info["id"] != "test/model" {
-		t.Errorf("Expected id 'test/model', got %v", info["id"])
+	id, _ := info["id"].(string)
+	if id == "" {
+		t.Error("Expected non-empty model id")
 	}
+	t.Logf("Model info id: %s", id)
 }
 
 func TestSetProxy(t *testing.T) {

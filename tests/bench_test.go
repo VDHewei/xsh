@@ -9,16 +9,6 @@ import (
 	llm "github.com/VDHewei/xsh/pkg/llm"
 )
 
-// ===== LLM Benchmarks =====
-
-// BenchmarkMockInfer 测试 Mock 推理性能
-func BenchmarkMockInfer(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		llm.MockInfer("Benchmark test prompt for performance measurement")
-	}
-}
-
 // BenchmarkTaskAnalyzer 测试任务分析器性能
 func BenchmarkTaskAnalyzer(b *testing.B) {
 	analyzer := llm.NewTaskAnalyzer()

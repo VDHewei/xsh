@@ -1,12 +1,15 @@
 package llm
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -26,7 +29,7 @@ func NewDownloadConfig() *DownloadConfig {
 	return &DownloadConfig{
 		Proxy:    "",
 		Mirror:   defaultMirror,
-		Token:    "",
+		Token:    os.Getenv("HF_TOKEN"),
 		CacheDir: "models",
 	}
 }
@@ -39,15 +42,19 @@ type DownloadedModel struct {
 	RepoID string
 }
 
+// lfsPointer LFS 指针文件内容
+type lfsPointer struct {
+	OID  string
+	Size int64
+}
+
 // DownloadFromHuggingFace 从 HuggingFace 下载模型
 func DownloadFromHuggingFace(repoID string, cfg *DownloadConfig) (*DownloadedModel, error) {
-	// 确定使用的基础 URL
 	baseURL := "https://huggingface.co"
 	if cfg.Mirror != "" {
 		baseURL = cfg.Mirror
 	}
 
-	// 创建目录
 	modelName := strings.ReplaceAll(repoID, "/", "_")
 	downloadPath := filepath.Join(cfg.CacheDir, modelName)
 
@@ -56,25 +63,16 @@ func DownloadFromHuggingFace(repoID string, cfg *DownloadConfig) (*DownloadedMod
 	}
 
 	// 获取模型文件列表
-	// 使用 Git LFS API 获取文件列表
 	treeURL := fmt.Sprintf("%s/api/%s/revision/main", baseURL, repoID)
 	if cfg.Mirror != "" {
 		treeURL = cfg.Mirror + "/api/" + repoID + "/revision/main"
 	}
 
-	resp, err := http.Get(treeURL)
+	body, err := doHTTPGet(treeURL, cfg.Token)
 	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	// 读取响应
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch file list for %s: %w", repoID, err)
 	}
 
-	// 解析 JSON 获取文件列表
 	var treeResponse struct {
 		Tree []struct {
 			Path string `json:"path"`
@@ -83,57 +81,26 @@ func DownloadFromHuggingFace(repoID string, cfg *DownloadConfig) (*DownloadedMod
 	}
 
 	if err := json.Unmarshal(body, &treeResponse); err != nil {
-		// 如果解析失败，创建占位文件
-		outputFile := filepath.Join(downloadPath, "model.onnx")
-		out, err := os.Create(outputFile)
-		if err != nil {
-			return nil, err
-		}
-		defer out.Close()
-		out.WriteString("# Model placeholder\n")
-		out.WriteString(fmt.Sprintf("# RepoID: %s\n", repoID))
-
-		info, _ := os.Stat(outputFile)
-		return &DownloadedModel{
-			Name:   modelName,
-			Path:   downloadPath,
-			Size:   info.Size(),
-			RepoID: repoID,
-		}, nil
+		return nil, fmt.Errorf("parse API response for %s: %w", repoID, err)
 	}
 
-	// 下载文件
 	httpClient := &http.Client{}
 	totalSize := int64(0)
 
 	for _, item := range treeResponse.Tree {
 		if item.Type == "blob" {
-			// 下载每个文件
 			filePath := filepath.Join(downloadPath, item.Path)
-			if err := downloadFile(httpClient, repoID, item.Path, filePath, cfg); err != nil {
+			size, err := downloadFileReal(httpClient, repoID, item.Path, filePath, cfg)
+			if err != nil {
 				fmt.Printf("Warning: failed to download %s: %v\n", item.Path, err)
 				continue
 			}
-
-			info, err := os.Stat(filePath)
-			if err == nil {
-				totalSize += info.Size()
-			}
+			totalSize += size
 		}
 	}
 
-	// 如果没有下载任何文件，创建占位
 	if totalSize == 0 {
-		outputFile := filepath.Join(downloadPath, "model.onnx")
-		out, err := os.Create(outputFile)
-		if err != nil {
-			return nil, err
-		}
-		defer out.Close()
-		out.WriteString("# Model placeholder\n")
-		out.WriteString(fmt.Sprintf("# RepoID: %s\n", repoID))
-		info, _ := os.Stat(outputFile)
-		totalSize = info.Size()
+		return nil, fmt.Errorf("no files downloaded for %s", repoID)
 	}
 
 	return &DownloadedModel{
@@ -142,6 +109,185 @@ func DownloadFromHuggingFace(repoID string, cfg *DownloadConfig) (*DownloadedMod
 		Size:   totalSize,
 		RepoID: repoID,
 	}, nil
+}
+
+// downloadFileReal 下载文件，自动处理 LFS 指针文件
+func downloadFileReal(client *http.Client, repoID, filename, destPath string, cfg *DownloadConfig) (int64, error) {
+	baseURL := "https://huggingface.co"
+	if cfg.Mirror != "" {
+		baseURL = cfg.Mirror
+	}
+	baseURL = strings.TrimSuffix(baseURL, "/raw")
+	baseURL = strings.TrimSuffix(baseURL, "/tree")
+
+	url := fmt.Sprintf("%s/%s/resolve/main/%s", baseURL, repoID, filename)
+
+	data, err := doHTTPGet(url, cfg.Token)
+	if err != nil {
+		return 0, fmt.Errorf("fetch: %w", err)
+	}
+
+	// 如果是 LFS 指针文件，通过 LFS API 获取真实内容
+	if ptr := parseLFSPointer(data); ptr != nil {
+		data, err = downloadLFSObject(client, repoID, ptr, cfg)
+		if err != nil {
+			return 0, fmt.Errorf("lfs: %w", err)
+		}
+	}
+
+	dir := filepath.Dir(destPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return 0, err
+	}
+
+	if err := os.WriteFile(destPath, data, 0644); err != nil {
+		return 0, err
+	}
+
+	return int64(len(data)), nil
+}
+
+// parseLFSPointer 检测 LFS 指针文件并解析
+func parseLFSPointer(data []byte) *lfsPointer {
+	if !bytes.HasPrefix(data, []byte("version https://git-lfs.github.com")) {
+		return nil
+	}
+
+	var ptr lfsPointer
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "oid sha256:") {
+			ptr.OID = strings.TrimPrefix(line, "oid sha256:")
+		}
+		if strings.HasPrefix(line, "size ") {
+			ptr.Size, _ = strconv.ParseInt(strings.TrimPrefix(line, "size "), 10, 64)
+		}
+	}
+
+	if ptr.OID == "" {
+		return nil
+	}
+	return &ptr
+}
+
+// downloadLFSObject 通过 HuggingFace LFS 批量 API 下载真实文件
+func downloadLFSObject(client *http.Client, repoID string, ptr *lfsPointer, cfg *DownloadConfig) ([]byte, error) {
+	baseURL := "https://huggingface.co"
+	if cfg.Mirror != "" {
+		baseURL = cfg.Mirror
+	}
+
+	batchURL := fmt.Sprintf("%s/api/%s.git/info/lfs/objects/batch", baseURL, repoID)
+
+	reqBody := map[string]interface{}{
+		"operation": "download",
+		"objects": []map[string]interface{}{
+			{
+				"oid":  ptr.OID,
+				"size": ptr.Size,
+			},
+		},
+	}
+
+	jsonBody, _ := json.Marshal(reqBody)
+
+	req, err := http.NewRequest("POST", batchURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.git-lfs+json")
+	if cfg.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("lfs batch request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("lfs batch: %s - %s", resp.Status, string(body))
+	}
+
+	var batchResp struct {
+		Objects []struct {
+			OID    string `json:"oid"`
+			Size   int64  `json:"size"`
+			Actions *struct {
+				Download *struct {
+					Href string `json:"href"`
+				} `json:"download"`
+			} `json:"actions"`
+			Error *struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"objects"`
+	}
+
+	if err := json.Unmarshal(body, &batchResp); err != nil {
+		return nil, fmt.Errorf("parse lfs batch response: %w", err)
+	}
+
+	if len(batchResp.Objects) == 0 {
+		return nil, fmt.Errorf("no objects in lfs batch response")
+	}
+
+	obj := batchResp.Objects[0]
+	if obj.Error != nil {
+		return nil, fmt.Errorf("lfs object error: %s (code %d)", obj.Error.Message, obj.Error.Code)
+	}
+
+	if obj.Actions == nil || obj.Actions.Download == nil {
+		return nil, fmt.Errorf("no download action for lfs object")
+	}
+
+	downloadURL := obj.Actions.Download.Href
+	data, err := doHTTPGet(downloadURL, cfg.Token)
+	if err != nil {
+		return nil, fmt.Errorf("lfs download: %w", err)
+	}
+
+	return data, nil
+}
+
+// doHTTPGet 发起 GET 请求并返回 body
+func doHTTPGet(url, token string) ([]byte, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		if len(body) > 200 {
+			body = body[:200]
+		}
+		return nil, fmt.Errorf("%s: %s", resp.Status, string(body))
+	}
+
+	return body, nil
 }
 
 // downloadFileWithURL 使用指定 URL 下载文件
@@ -165,55 +311,9 @@ func downloadFileWithURL(client *http.Client, url, destPath string, cfg *Downloa
 		return fmt.Errorf("failed to download: %s", resp.Status)
 	}
 
-	// 确保目录存在
 	dir := filepath.Dir(destPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
-	}
-
-	out, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
-}
-
-// downloadFile 下载单个文件
-func downloadFile(client *http.Client, repoID, filename, destPath string, cfg *DownloadConfig) error {
-	// 构建下载 URL
-	baseURL := "https://huggingface.co"
-	if cfg.Mirror != "" {
-		baseURL = cfg.Mirror
-	}
-	baseURL = strings.TrimSuffix(baseURL, "/raw")
-	baseURL = strings.TrimSuffix(baseURL, "/tree")
-
-	url := fmt.Sprintf("%s/%s/resolve/main/%s", baseURL, repoID, filename)
-
-	if cfg.Proxy != "" {
-		url = cfg.Proxy + url
-	}
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return err
-	}
-
-	if cfg.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.Token)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download: %s", resp.Status)
 	}
 
 	out, err := os.Create(destPath)
@@ -241,8 +341,6 @@ func DownloadWithMirror(repoID, mirror string) (*DownloadedModel, error) {
 }
 
 // resolveModelRepo 根据候选模型名解析完整 HuggingFace RepoID
-// 如果 candidate 是已知的短名称（如 "deepseek", "glm5.1"），返回对应的完整 RepoID
-// 否则直接返回原值（视为用户直接提供的完整 RepoID）
 func resolveModelRepo(candidate string) string {
 	candidates := DefaultCandidateModels()
 	for _, c := range candidates {
@@ -255,36 +353,52 @@ func resolveModelRepo(candidate string) string {
 
 // SearchModels 搜索 HuggingFace 模型
 func SearchModels(query string, cfg *DownloadConfig) ([]string, error) {
-	// 使用 HF API 进行搜索
 	baseURL := "https://huggingface.co"
 	if cfg.Mirror != "" {
 		baseURL = cfg.Mirror
 	}
 
-	apiURL := fmt.Sprintf("%s/api/models?search=%s", baseURL, query)
+	apiURL := fmt.Sprintf("%s/api/models?search=%s&sort=downloads&direction=-1&limit=10", baseURL, query)
 
-	resp, err := http.Get(apiURL)
+	body, err := doHTTPGet(apiURL, cfg.Token)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("search API: %w", err)
 	}
-	defer resp.Body.Close()
 
-	// 占位返回搜索结果
-	return []string{
-		"facebook/opt-125m",
-		"facebook/opt-350m",
-		"meta-llama/Llama-2-7b-hf",
-	}, nil
+	var models []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &models); err != nil {
+		return nil, fmt.Errorf("parse search results: %w", err)
+	}
+
+	var names []string
+	for _, m := range models {
+		names = append(names, m.ID)
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no models found for query: %s", query)
+	}
+	return names, nil
 }
 
 // GetModelInfo 获取模型信息
 func GetModelInfo(repoID string, cfg *DownloadConfig) (map[string]interface{}, error) {
-	result := map[string]interface{}{
-		"id":         repoID,
-		"downloads":  0,
-		"likes":      0,
-		"tags":       []string{},
-		"pipeline_tag": "",
+	baseURL := "https://huggingface.co"
+	if cfg.Mirror != "" {
+		baseURL = cfg.Mirror
+	}
+
+	apiURL := fmt.Sprintf("%s/api/models/%s", baseURL, repoID)
+
+	body, err := doHTTPGet(apiURL, cfg.Token)
+	if err != nil {
+		return nil, fmt.Errorf("model info API: %w", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parse model info: %w", err)
 	}
 
 	return result, nil
