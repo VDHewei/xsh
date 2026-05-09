@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -10,19 +9,30 @@ import (
 	"github.com/VDHewei/xsh/internal/parser"
 	"github.com/VDHewei/xsh/internal/tui"
 	llm "github.com/VDHewei/xsh/pkg/llm"
+	flag "github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
-var (
-	inputFile  = flag.String("i", "", "Input task file (txt/md)")
-	outputFile = flag.String("o", "", "Output result file")
-	llmModel   = flag.String("m", "", "LLM model directory path or name")
-	llmPrompt  = flag.String("p", "", "LLM prompt for inference")
-	testMode   = flag.Bool("test", false, "Run ONNX LLM test mode")
-	streamMode = flag.Bool("stream", false, "Enable streaming output for LLM inference")
-)
+func init() {
+	// 主命令标志
+	flag.StringP("input", "i", "", "Input task file (txt/md)")
+	flag.StringP("output", "o", "", "Output result file")
+	flag.StringP("model", "m", "", "LLM model directory path or name")
+	flag.StringP("prompt", "p", "", "LLM prompt for inference")
+	flag.Bool("test", false, "Run ONNX LLM test mode")
+	flag.Bool("stream", false, "Enable streaming output for LLM inference")
+
+	// 绑定 flag 到 viper
+	viper.BindPFlag("input", flag.Lookup("input"))
+	viper.BindPFlag("output", flag.Lookup("output"))
+	viper.BindPFlag("model", flag.Lookup("model"))
+	viper.BindPFlag("prompt", flag.Lookup("prompt"))
+	viper.BindPFlag("test", flag.Lookup("test"))
+	viper.BindPFlag("stream", flag.Lookup("stream"))
+}
 
 func main() {
-	// model 子命令路由
+	// model 子命令路由 (在 parse 之前处理)
 	if len(os.Args) > 1 && os.Args[1] == "model" {
 		if err := llm.ParseModelCommand(os.Args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -33,26 +43,33 @@ func main() {
 
 	flag.Parse()
 
+	inputFile := viper.GetString("input")
+	outputFile := viper.GetString("output")
+	llmModel := viper.GetString("model")
+	llmPrompt := viper.GetString("prompt")
+	testMode := viper.GetBool("test")
+	streamMode := viper.GetBool("stream")
+
 	// 测试模式
-	if *testMode {
-		runTestMode()
+	if testMode {
+		runTestMode(streamMode)
 		return
 	}
 
 	// LLM 模式
-	if *llmModel != "" || *llmPrompt != "" {
-		runLLMMode(*llmModel, *llmPrompt, *inputFile)
+	if llmModel != "" || llmPrompt != "" {
+		runLLMMode(llmModel, llmPrompt, inputFile, streamMode)
 		return
 	}
 
 	// 无参数时启动 TUI 交互模式
-	if *inputFile == "" {
+	if inputFile == "" {
 		tui.RunInteractive()
 		return
 	}
 
 	// CLI 模式：读取并执行任务
-	tasks, err := parser.ParseFile(*inputFile)
+	tasks, err := parser.ParseFile(inputFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing file: %v\n", err)
 		os.Exit(1)
@@ -61,8 +78,8 @@ func main() {
 	results := executor.ExecuteTasks(tasks)
 
 	// 输出结果
-	if *outputFile != "" {
-		f, err := os.Create(*outputFile)
+	if outputFile != "" {
+		f, err := os.Create(outputFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
 			os.Exit(1)
@@ -79,7 +96,7 @@ func main() {
 }
 
 // runTestMode 运行测试模式 (支持多模型对比)
-func runTestMode() {
+func runTestMode(streamEnabled bool) {
 	fmt.Println("=== ONNX GenAI LLM 任务规划测试 ===")
 
 	testFile := "tests/data/prod-migration-form-uat.txt"
@@ -116,10 +133,8 @@ func runTestMode() {
 	if glmDir != "" {
 		results = append(results, testModelInference(glmDir, "glm5.1-distill", content))
 	} else {
-		fmt.Println("GLM5.1 模型未找到, 尝试使用 Mock")
-		analyzer := llm.NewTaskAnalyzer()
-		tasks, err := analyzer.AnalyzeContent(content)
-		results = append(results, modelTestResult{"glm5.1-distill (mock)", len(tasks), err})
+		fmt.Println("GLM5.1 模型未找到")
+		results = append(results, modelTestResult{"glm5.1-distill", 0, fmt.Errorf("model not found")})
 	}
 
 	// 打印对比结果
@@ -131,6 +146,8 @@ func runTestMode() {
 		}
 		fmt.Printf("  %-30s %3d tasks  %s\n", r.modelName, r.taskCount, status)
 	}
+
+	_ = streamEnabled
 }
 
 type modelTestResult struct {
@@ -235,53 +252,8 @@ func findModelDir() string {
 	return ""
 }
 
-// testWithGenAI 使用 GenAI 测试
-func testWithGenAI(modelDir, content string) {
-	model := llm.NewModel("deepseek-r1-distill")
-	defer model.Unload()
-
-	fmt.Println("加载模型...")
-	if err := model.Load(modelDir); err != nil {
-		fmt.Printf("加载模型失败: %v\n使用 Mock 推理\n", err)
-		result := llm.MockInfer(content)
-		fmt.Printf("推理结果:\n%s\n", result)
-		return
-	}
-
-	fmt.Println("模型加载成功!")
-
-	// 构建任务分析提示
-	prompt := llm.BuildTaskPrompt(content)
-
-	fmt.Println("\n执行推理...")
-	if *streamMode {
-		fmt.Println("--- 流式输出 ---")
-		err := model.InferStream(prompt, llm.GenerateOptions{
-			MaxTokens:   2048,
-			Temperature: 0.7,
-			TopP:        0.9,
-			DoSample:    true,
-			StopOnEos:   true,
-		}, func(text string) error {
-			fmt.Print(text)
-			return nil
-		})
-		if err != nil {
-			fmt.Printf("\n推理错误: %v\n", err)
-		}
-		fmt.Println()
-	} else {
-		result, err := model.Infer(prompt)
-		if err != nil {
-			fmt.Printf("推理失败: %v\n", err)
-			return
-		}
-		fmt.Printf("\n推理结果:\n%s\n", result)
-	}
-}
-
 // runLLMMode 运行 LLM 模式
-func runLLMMode(modelName string, prompt string, inputFile string) {
+func runLLMMode(modelName string, prompt string, inputFile string, streamEnabled bool) {
 	// 解析模型路径：可能是名称或路径
 	modelDir := modelName
 	if modelName != "" && !strings.Contains(modelName, "/") && !strings.Contains(modelName, "\\") {
@@ -304,7 +276,7 @@ func runLLMMode(modelName string, prompt string, inputFile string) {
 	// 使用模型推理
 	if prompt != "" {
 		if model != nil && model.IsLoaded() {
-			if *streamMode {
+			if streamEnabled {
 				err := model.InferStream(prompt, llm.GenerateOptions{
 					MaxTokens:   2048,
 					Temperature: 0.7,

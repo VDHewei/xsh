@@ -1,5 +1,6 @@
-.idea
-.vscode
+.idea/
+.vscode/
+.vs/
 bin/
 *.zip
 *.exe

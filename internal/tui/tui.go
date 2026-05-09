@@ -330,7 +330,23 @@ func (a *App) saveResults() {
 	if a.outputFile == "" {
 		return
 	}
-	// TODO: 保存结果到文件
+
+	f, err := os.Create(a.outputFile)
+	if err != nil {
+		a.progress.SetText(a.errTag(fmt.Sprintf("Failed to save results: %v", err)))
+		return
+	}
+	defer f.Close()
+
+	fmt.Fprintf(f, "# XSH Task Execution Results\n")
+	fmt.Fprintf(f, "# Input: %s\n", a.inputFile)
+	fmt.Fprintf(f, "# Time: %s\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(f, "# Tasks: %d\n\n", len(a.results))
+
+	for i, r := range a.results {
+		fmt.Fprintf(f, "## Task %d\n", i+1)
+		fmt.Fprintf(f, "```\n%s\n```\n\n", r)
+	}
 }
 
 // --- helpers ---

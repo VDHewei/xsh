@@ -31,23 +31,19 @@ func (a *TaskAnalyzer) SetModel(model *Model) {
 // AnalyzeContent 分析内容并生成任务
 func (a *TaskAnalyzer) AnalyzeContent(content string) ([]*types.Task, error) {
 	if a.model == nil || !a.model.IsLoaded() {
-		// 使用 Mock 推理
-		return a.mockAnalyze(content), nil
+		return nil, fmt.Errorf("no LLM model loaded for task analysis")
 	}
 
 	prompt := buildAnalyzePrompt(content)
 	result, err := a.model.InferWithConfig(prompt, a.cfg)
 	if err != nil {
-		// LLM 推理失败时降级到 mock
-		fmt.Printf("LLM inference failed (%v), falling back to mock analysis\n", err)
-		return a.mockAnalyze(content), nil
+		return nil, fmt.Errorf("LLM inference failed: %w", err)
 	}
 
 	// 解析 LLM 输出为任务
 	tasks := parseLLMResult(result)
 	if len(tasks) == 0 {
-		// LLM 输出无法解析时降级到 mock
-		return a.mockAnalyze(content), nil
+		return nil, fmt.Errorf("LLM output could not be parsed into tasks")
 	}
 	return tasks, nil
 }
@@ -59,39 +55,6 @@ func (a *TaskAnalyzer) AnalyzeFile(filename string) ([]*types.Task, error) {
 		return nil, fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
 	return a.AnalyzeContent(string(data))
-}
-
-// mockAnalyze 模拟分析（无模型时的后备方案）
-func (a *TaskAnalyzer) mockAnalyze(content string) []*types.Task {
-	var tasks []*types.Task
-
-	// 检测迁移任务
-	if strings.Contains(content, "migration") || strings.Contains(content, "迁移") {
-		task := &types.Task{
-			Type: types.TaskTypeAsk,
-			Raw:  "@ask: 检测到迁移任务，是否继续执行?",
-			Ask: &types.AskTask{
-				Prompt: "检测到迁移流程，是否继续执行?",
-			},
-		}
-		tasks = append(tasks, task)
-	}
-
-	// 检测 HTTP 请求
-	urls := extractURLs(content)
-	for _, url := range urls {
-		task := &types.Task{
-			Type: types.TaskTypeHTTP,
-			Raw:  fmt.Sprintf("[GET] %s", url),
-			HTTP: &types.HTTPTask{
-				Method: "GET",
-				URL:   url,
-			},
-		}
-		tasks = append(tasks, task)
-	}
-
-	return tasks
 }
 
 // buildAnalyzePrompt 构建分析提示
@@ -263,7 +226,3 @@ func extractURLs(content string) []string {
 	return urls
 }
 
-// InferWithPrompt 使用 LLM 推理（无模型时使用 mock）
-func InferWithPrompt(prompt string) (string, error) {
-	return MockInfer(prompt), nil
-}

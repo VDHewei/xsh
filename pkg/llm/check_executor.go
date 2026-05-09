@@ -19,16 +19,14 @@ func NewCheckExecutor(model *Model) *CheckExecutor {
 
 // Execute 结合上下文让 LLM 判断检查是否通过
 func (e *CheckExecutor) Execute(task *types.CheckTask, context string) (*types.CheckResult, error) {
-	prompt := e.buildCheckPrompt(task, context)
-
 	if e.model == nil || !e.model.IsLoaded() {
-		return e.mockExecute(task, context), nil
+		return nil, fmt.Errorf("no LLM model loaded for check execution")
 	}
 
+	prompt := e.buildCheckPrompt(task, context)
 	response, err := e.model.Infer(prompt)
 	if err != nil {
-		fmt.Printf("Check LLM inference failed (%v), falling back to mock\n", err)
-		return e.mockExecute(task, context), nil
+		return nil, fmt.Errorf("check LLM inference failed: %w", err)
 	}
 
 	passed, reason := parseCheckResult(response)
@@ -90,14 +88,4 @@ func parseCheckResult(response string) (passed bool, reason string) {
 		}
 	}
 	return passed, reason
-}
-
-// mockExecute 无模型时返回模拟检查结果
-func (e *CheckExecutor) mockExecute(task *types.CheckTask, context string) *types.CheckResult {
-	return &types.CheckResult{
-		Prompt:  task.Prompt,
-		Passed:  true, // mock 默认通过
-		Reason:  fmt.Sprintf("[Mock] Check condition '%s' assumed passed (no LLM model loaded)", task.Prompt),
-		Context: context,
-	}
 }

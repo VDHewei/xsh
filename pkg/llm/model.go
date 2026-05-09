@@ -732,11 +732,6 @@ func ResolveCandidateName(name string) string {
 	return ""
 }
 
-// MockInfer 模拟推理（用于测试，无模型时的后备方案）
-func MockInfer(prompt string) string {
-	return fmt.Sprintf("[Mock LLM Response]\nProcessed: %s\n\nThis is a mock response for testing purposes.", prompt)
-}
-
 // --- 工具函数 ---
 
 func copyFile(src, dst string) error {

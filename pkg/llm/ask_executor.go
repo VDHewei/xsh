@@ -19,16 +19,14 @@ func NewAskExecutor(model *Model) *AskExecutor {
 
 // Execute 执行 Ask 任务: 发送 prompt 给 LLM, 解析建议
 func (e *AskExecutor) Execute(task *types.AskTask) (*types.AskResult, error) {
-	prompt := e.buildAskPrompt(task)
-
 	if e.model == nil || !e.model.IsLoaded() {
-		return e.mockExecute(task), nil
+		return nil, fmt.Errorf("no LLM model loaded for ask execution")
 	}
 
+	prompt := e.buildAskPrompt(task)
 	response, err := e.model.Infer(prompt)
 	if err != nil {
-		fmt.Printf("Ask LLM inference failed (%v), falling back to mock\n", err)
-		return e.mockExecute(task), nil
+		return nil, fmt.Errorf("ask LLM inference failed: %w", err)
 	}
 
 	suggestion := extractSuggestion(response)
@@ -76,13 +74,4 @@ func extractSuggestion(response string) string {
 		}
 	}
 	return response
-}
-
-// mockExecute 无模型时返回模拟分析
-func (e *AskExecutor) mockExecute(task *types.AskTask) *types.AskResult {
-	return &types.AskResult{
-		Prompt:     task.Prompt,
-		Response:   fmt.Sprintf("[Mock] Analysis for: %s", task.Prompt),
-		Suggestion: fmt.Sprintf("This step (%s) requires manual review. Proceed with caution.", task.Prompt),
-	}
 }
